@@ -5695,7 +5695,10 @@ AF.battle = (() => {
       "AF-R-708 combat readability is unverifiable until there is real art on a real device",
       "deep_barrow and ashen_reach are declared regions with encounter tables and no maps",
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
-      "custodian_of_the_seal and the_hollow_dragon are declared, phased, and triggered by nothing — no scene starts either boss",
+      "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
+      "AF-R-811: firstBossDefeated is declared, sits first in AF.integrity's FLOORS at 88, and is set by NOTHING in the game — only by self-tests. It is the first uncleared gate, so the act model's floor cannot move off 88 no matter which later flags are set. Felling the Custodian sets custodianDefeated and changes no floor. Whether he IS the first boss is act structure, which is canon and not the engine's to decide (AF-R-1007)",
+      "the Custodian's aftermath prose is a draft (placeholder.custodian.seal.1/2) written from the user's canon beat, not the user's own words; his warning line is theirs verbatim and is approved",
+      "the sigil among the Custodian's remains is described in canon and exists as no item — the aftermath narrates it and the bag does not receive it",
       "vendor zones are authored against the collision mask, not measured against the room art — the prompt may not read next to the drawn counter (AF-R-708, needs a device screenshot)",
       "AF.authoring.validateInteractables approved a vendor zone the real walk-up path could not reach (0.7.0). It now walks every approach and reports partial failures, but no fixture has been built that proves it catches that shape — the guard that caught it was a self-test driving input:confirm. Treat a clean validator run as necessary, not sufficient.",
       "AF.demo (rowans_hold) still hardcodes GRADES.day at module scope — the last scene bypassing region data. forest_route and barrow_downs read AF.render.gradeOf as of 0.9.2; adding rowans_hold closes PASS_PLAN step 2",
@@ -5987,6 +5990,22 @@ AF.battle = (() => {
         art from a real pack rather than an invented tile.                  */
     const r = AF.state.region;
     const GROUND = { barrow_downs: "forest_dirt" }[r] || "forest_grass";
+    /*  0.35.0 — THE PROPS ARE REGION-BOUND TOO, and until now only the ground
+        was. The barrow's fight drew barrow dirt correctly and then stood the
+        Herbalist pack's oaks and bushes on it, so the Custodian was fought in
+        a wood. Found by screenshotting the fight, not by a test: every draw
+        path "runs clean" either way, which is AUDIT_0_9_3's open finding 6.
+
+        0.10.0 wrote down the fix in advance — "because the region owns its
+        tileset (AF-R-303) the barrow's fight can look like the barrow by
+        naming different rects" — and every rect named below is already
+        declared, verified and in the atlas, placed by AF.barrowDowns itself.
+        No new art, no atlas change.                                        */
+    if (r === "barrow_downs") return {
+      ground:  AF.atlas.rect(GROUND),
+      scatter: ["bd_bone_2","bd_bone_5","bd_grit_1","bd_crack_3","bd_grit_6"].map(id => AF.atlas.rect(id)),
+      props:   ["ruin_a","ruin_b","deadtree_a","skulls","grave_b"].map(id => AF.atlas.rect(id))
+    };
     /*  The scatter is not decoration. ASSET_MANIFEST records that the
         Herbalist fill tile is a single flat colour and that the pack's
         texture lives in a separate scatter layer — which is exactly how the
@@ -7599,6 +7618,30 @@ AF.content = (() => {
       "[placeholder] Word came down the road about the barrow gate.",
     "placeholder.merchant.after_gate.2":
       "[placeholder] Stock's moving faster than I can shelve it. Take what you need.",
+
+    /*  0.35.0 — THE CUSTODIAN OF THE SEAL.
+
+        His warning is APPROVED CANON, given verbatim by the user with the
+        Custodian's history, so it draws clean (AF-R-1007). He has spoken it
+        to no one for centuries; it is the whole of his dialogue, and he does
+        not bargain, so there is no second line and none is invented to fill
+        a slot — the same call 0.21.0 made for Mara's idle pair.
+
+        The two `placeholder.` lines below are MY prose for the aftermath the
+        user described — the cracked seal, the shifting weight beneath, the
+        sigil among his remains. The beat is canon; these sentences are a
+        draft of it, so they carry the marker and stay in
+        AF.text.placeholders() until approved (AF-R-203). Drawing my wording
+        clean because the scene behind it was approved is exactly the drift
+        that rule exists to stop.                                          */
+    "custodian.warning":
+      "Turn back, while I still remember that I was once merciful.",
+    "placeholder.custodian.seal.1":
+      "[placeholder] The seal holds — but a crack runs through it that did not run before, " +
+      "and far under the stone something enormous shifts. For a moment the whole of the Downs seems to breathe.",
+    "placeholder.custodian.seal.2":
+      "[placeholder] Among the Custodian's remains lies a weathered sigil, cut with the same mark " +
+      "that has begun to appear wherever the Hold's curse runs strongest.",
     "villager.maro.idle":   "Chapel bell wants re-hanging. Nobody's volunteering.",
     "villager.hallis.idle": "Door's open. Mind the step, it's older than I am.",
 
@@ -12484,6 +12527,124 @@ AF.selftest = (() => {
       if (String(first.foes) !== String(want)) return `foes were ${first.foes}, table says ${want}`;
       if (!flagged) return "winning did not set barrow_gate_cleared";
       return !second || "the ambush fired a second time";
+    });
+
+    /*  0.35.0 — THE CUSTODIAN. Three tests, and the first is the one that
+        matters: a player has to be able to WALK to him. The gate ambush's
+        test above teleports into its band, which proves the trigger responds
+        but not that the trail reaches it — the distinction §6 of the handoff
+        was written about, and the reason 0.6.18 shipped broken twice. This
+        one holds a direction and lets the real update loop move the party.  */
+    t("walking the barrow trail to its end reaches the Custodian", () => {
+      const saved = { scene: AF.state.sceneId, region: AF.state.region,
+                      x: AF.state.player.x, y: AF.state.player.y,
+                      f: AF.state.player.facing, mode: AF.state.mode };
+      const rate = AF.content.REGIONS.barrow_downs.encounterRate;
+      AF.content.REGIONS.barrow_downs.encounterRate = 0;   // isolate the authored fight
+      const clearedWas = AF.story.get("barrow_gate_cleared");
+      const feltWas    = AF.story.get("custodianDefeated");
+      AF.story.set("barrow_gate_cleared", true);           // not the fight under test
+      AF.story.set("custodianDefeated", false);
+      AF.scene.enter("barrow_downs", "from_forest");
+      //  Start just past the gate band and walk south down the trail.
+      const gate = AF.barrowDowns.GATE_BAND;
+      AF.state.player.x = gate.x + gate.w / 2;
+      AF.state.player.y = gate.y + gate.h + 8;
+      const realAxis = AF.input.axis;
+      AF.input.axis = () => ({ x: 0, y: 1 });
+      let steps = 0;
+      while (steps < 600 && !AF.battle.isActive()) { AF.barrowDowns.update(1/60); steps++; }
+      AF.input.axis = realAxis;
+      const met = AF.battle.isActive()
+        ? { kind: AF.battle.active().kind, foes: AF.battle.active().enemies.map(e => e.enemyId) } : null;
+      const endedAt = AF.state.player.y;
+      if (AF.battle.isActive()) AF.battle.end("aborted");
+      AF.transition.settle();
+      AF.content.REGIONS.barrow_downs.encounterRate = rate;
+      AF.story.set("barrow_gate_cleared", clearedWas);
+      AF.story.set("custodianDefeated", feltWas);
+      AF.state.sceneId = saved.scene; AF.state.region = saved.region;
+      AF.state.player.x = saved.x; AF.state.player.y = saved.y;
+      AF.state.player.facing = saved.f; AF.mode.set(saved.mode);
+      if (!met) return `walked ${steps} frames to y=${Math.round(endedAt)} and met nothing`;
+      if (met.kind !== "authored") return `the Custodian ran as "${met.kind}", not authored`;
+      const want = AF.content.AUTHORED.custodian_of_the_seal.enemies;
+      return String(met.foes) === String(want) || `foes were ${met.foes}, table says ${want}`;
+    });
+
+    t("the Custodian fires once and winning lowers the seal floor", () => {
+      const saved = { scene: AF.state.sceneId, region: AF.state.region,
+                      x: AF.state.player.x, y: AF.state.player.y, mode: AF.state.mode };
+      const rate = AF.content.REGIONS.barrow_downs.encounterRate;
+      AF.content.REGIONS.barrow_downs.encounterRate = 0;
+      const clearedWas = AF.story.get("barrow_gate_cleared");
+      const feltWas    = AF.story.get("custodianDefeated");
+      AF.story.set("barrow_gate_cleared", true);
+      AF.story.set("custodianDefeated", false);
+      const floorBefore = AF.integrity.floor(AF.state.flags);
+      AF.scene.enter("barrow_downs", "from_forest");
+      const band = AF.barrowDowns.SEAL_BAND;
+      const stand = () => { AF.state.player.x = band.x + band.w / 2;
+                            AF.state.player.y = band.y + band.h / 2;
+                            AF.barrowDowns.update(1/60); };
+      stand();
+      const first = AF.battle.isActive();
+      if (AF.battle.isActive()) AF.battle.end("victory");
+      const flagged = AF.story.get("custodianDefeated");
+      const floorAfter = AF.integrity.floor(AF.state.flags);
+      stand();                                   // standing there again must not re-fight
+      const second = AF.battle.isActive();
+      if (AF.battle.isActive()) AF.battle.end("aborted");
+      AF.transition.settle();
+      AF.content.REGIONS.barrow_downs.encounterRate = rate;
+      AF.story.set("barrow_gate_cleared", clearedWas);
+      AF.story.set("custodianDefeated", feltWas);
+      AF.state.sceneId = saved.scene; AF.state.region = saved.region;
+      AF.state.player.x = saved.x; AF.state.player.y = saved.y;
+      AF.mode.set(saved.mode);
+      if (!first) return "standing at the seal started no fight";
+      if (!flagged) return "winning did not set custodianDefeated";
+      if (second) return "the Custodian fought a second time after being felled";
+      /*  What actually happens, not what would be tidier. `gateOf` returns the
+          FIRST unmet flag, and `firstBossDefeated` sits ahead of this one at
+          88 — declared, in FLOORS, and set by nothing in the game. So felling
+          the Custodian does not move the floor today, and this asserts the
+          real pair rather than a hoped-for one.
+
+          The second half proves the wiring is nonetheless correct and live:
+          with the earlier gate met, `custodianDefeated` is worth 74. The day
+          something sets `firstBossDefeated`, this fight's consequence arrives
+          with no further work — and if someone gives the Custodian a private
+          flag instead, this goes red.                                     */
+      if (floorBefore !== 88 || floorAfter !== 88)
+        return `seal floor went ${floorBefore} -> ${floorAfter}; ` +
+               `expected 88 -> 88 while firstBossDefeated is unreachable`;
+      const standing = AF.integrity.floor({ firstBossDefeated: true, custodianDefeated: false,
+                                            dragonDefeated: false, caedrinDefeated: false });
+      const felled   = AF.integrity.floor({ firstBossDefeated: true, custodianDefeated: true,
+                                            dragonDefeated: false, caedrinDefeated: false });
+      return (standing === 74 && felled === 58)
+        || `with the first gate met, felling him moves the floor ${standing} -> ${felled}, expected 74 -> 58`;
+    });
+
+    t("the Custodian's warning is canon and the aftermath is still a draft", () => {
+      /*  The two-sided AF-R-203 guard, applied to this pass's prose. The
+          warning was given verbatim by the user, so it must draw clean and
+          must NOT be listed as a placeholder. The aftermath is my draft of a
+          beat they described, so it must draw marked and must be listed —
+          approving a scene does not approve the sentences someone else wrote
+          for it.                                                          */
+      const listed = AF.text.placeholders();
+      const warn = AF.text.get("custodian.warning");
+      const bad = [];
+      if (/\[placeholder\]/.test(warn)) bad.push("the warning draws marked");
+      if (listed.includes("custodian.warning")) bad.push("the warning is listed as a placeholder");
+      if (!/merciful/.test(warn)) bad.push("the warning is not the approved line");
+      for (const id of ["placeholder.custodian.seal.1", "placeholder.custodian.seal.2"]) {
+        if (!/\[placeholder\]/.test(AF.text.get(id))) bad.push(`${id} draws clean`);
+        if (!listed.includes(id)) bad.push(`${id} is not listed as a placeholder`);
+      }
+      return bad.length === 0 || bad.join("; ");
     });
 
     /*  0.9.2 — this test used to forbid the barrow from drawing forest tiles.
@@ -18211,6 +18372,14 @@ AF.barrowDowns = (() => {
   //  The gate band: the ambush fires when the player first walks past it.
   const GATE_BAND = Object.freeze({ x: 13 * T - 32, y: 26 * T, w: 3 * T, h: 2 * T });
 
+  /*  0.35.0 — THE SEAL BAND. The trail's last three rows, where PATH ends at
+      the south wall (seg(13, 12, 14, 33)). This is the deepest point of the
+      Downs and the far end of the only route through them, which is why the
+      Custodian is here and not in `deep_barrow`: the seal is what the sealed
+      south end IS. The module header has said since 0.7.0 that the way down
+      is closed; he is the reason it is closed.                             */
+  const SEAL_BAND = Object.freeze({ x: 13 * T - 32, y: 31 * T, w: 3 * T, h: 3 * T });
+
   const enc = { walked: 0, grace: 4 * T, banner: null };
   function stepEncounter(moved, dx) {
     if (!moved || AF.transition.active || AF.battle.isActive()) return;
@@ -18241,6 +18410,71 @@ AF.barrowDowns = (() => {
     }});
   }
 
+  /*  0.35.0 — THE CUSTODIAN. The second authored fight with a home, and the
+      first boss in this build that anything starts. `custodian_of_the_seal`
+      has been declared, phased and startable since 0.7.0 and triggered by
+      nothing, which AF.battle.todo() has reported every version since — the
+      same shape as the door in 0.6.18, the Items backend before 0.10.0 and
+      saving before 0.11.0. A complete system nobody can reach.
+
+      Gated on `custodianDefeated`, the flag the AUTHORED table already names.
+      Two consequences fall out of reusing that flag, and both are wanted:
+
+        · Losing does not clear it. Defeat revives the party at the Hold's
+          gate (AF-R-710) with the flag still false, so he is still standing
+          when they come back. A boss you can lose to and then walk past is
+          not a boss.
+        · Winning advances AF.integrity's act model. `gateOf` returns the
+          floor of the next UNCLEARED gate, and `custodianDefeated` is the
+          second row of FLOORS (AF-R-811): while he stands the floor is 74,
+          and felling him drops it to 58.
+
+          It does NOT move the floor yet, and the test below asserts that
+          rather than something nicer. The gate BEFORE this one is
+          `firstBossDefeated`, which is declared, sits in FLOORS at 88, and is
+          **set by nothing in the game** — only by self-tests. While it is
+          unmet it is the first uncleared gate, so the floor stays 88 however
+          the later flags fall, and the party can fell the Custodian with the
+          seal still refusing at 88.
+
+          That is the same shape as this fight itself was until this pass, one
+          layer down, and it is NOT fixed here: whether the Custodian counts as
+          the first boss is act structure, which is canon and the user's call
+          (AF-R-1007). Setting a second flag on his death to make a number move
+          would be inventing that answer quietly. Recorded in AF.battle.todo().
+
+      FLEXIBLE (AF-R-802): he SPEAKS and the fight starts. This is deliberately
+      not an AF.conversation. Cancel leaves a conversation without running what
+      follows it (0.9.0 choice 4), which would let a player decline a boss and
+      walk to the wall behind him; and standing in the band would re-fire it
+      every frame, which is the exact loop 0.9.0 fixed. His canon settles it —
+      he does not ask why they have come, and he does not bargain. One line,
+      then the fight, unfleeable because AF.encounter.trigger starts it with
+      kind:"authored".                                                      */
+  function stepCustodian() {
+    if (AF.battle.isActive() || AF.transition.active) return;
+    if (AF.story.get("custodianDefeated")) return;
+    const inside = player.x >= SEAL_BAND.x && player.x <= SEAL_BAND.x + SEAL_BAND.w &&
+                   player.y >= SEAL_BAND.y && player.y <= SEAL_BAND.y + SEAL_BAND.h;
+    if (!inside) return;
+    AF.speech.say(AF.content.nameOf("custodian_of_the_seal"),
+                  AF.text.get("custodian.warning"));
+    AF.encounter.trigger("custodian_of_the_seal", (s) => {
+      enc.grace = 4 * T;
+      if (s.outcome !== "victory") { enc.banner = { summary: s, untilMs: 2600 }; return; }
+      AF.story.set("custodianDefeated", true);
+      /*  The aftermath is narration, not dialogue, so it does not go through
+          the speech bubble: that surface draws a speaker's name above the
+          line, and there is nobody left to attribute this to. The scene's
+          own result banner is unattributed by construction, so the note
+          rides there and holds long enough to read.                       */
+      enc.banner = { summary: s, untilMs: 9000, note: [
+        AF.text.get("placeholder.custodian.seal.1"),
+        AF.text.get("placeholder.custodian.seal.2")
+      ] };
+    });
+  }
+
   AF.events.on("scene:entered", (e) => { if (e && e.next === sceneId) {
     /* 0.13.5 — clear any transient result banner on entry. Boot self-tests
        deliberately start/end battles with outcome "aborted"; without this
@@ -18253,6 +18487,7 @@ AF.barrowDowns = (() => {
     const bx = player.x, by = player.y;
     const moved = AF.sceneKit.walk(player, blockers, world, dt);
     stepAmbush();
+    stepCustodian();
     stepEncounter(moved, Math.hypot(player.x - bx, player.y - by));
     if (enc.banner) { enc.banner.untilMs -= dt * 1000; if (enc.banner.untilMs <= 0) enc.banner = null; }
     AF.sceneKit.edgeExit(player, EXIT_NORTH, "forest_route", "from_barrow");
@@ -18424,6 +18659,30 @@ AF.barrowDowns = (() => {
       ctx.fillStyle = "rgba(7,11,22,0.85)"; ctx.fillRect(16, 64, V.W - 32, 44);
       ctx.fillStyle = "#e0be7c"; ctx.font = "16px ui-monospace, monospace"; ctx.textBaseline = "middle";
       ctx.fillText(line, 28, 86);
+      /*  0.35.0 — the aftermath note. Unattributed narration, WRAPPED to the
+          panel rather than trimmed: the vendor log trims and the speech bubble
+          runs off (0.9.0 recorded both), and neither is acceptable for a line
+          the player is meant to read once. Measured against the real font
+          through ctx.measureText, so it wraps to what is actually drawn
+          rather than to an assumed character width.                        */
+      if (enc.banner.note) {
+        const maxW = V.W - 56, out = [];
+        for (const para of enc.banner.note) {
+          let cur = "";
+          for (const word of String(para).split(" ")) {
+            const next = cur ? `${cur} ${word}` : word;
+            if (ctx.measureText(next).width > maxW && cur) { out.push(cur); cur = word; }
+            else cur = next;
+          }
+          if (cur) out.push(cur);
+          out.push("");
+        }
+        while (out.length && out[out.length - 1] === "") out.pop();
+        const lineH = 22, top = 116, boxH = out.length * lineH + 24;
+        ctx.fillStyle = "rgba(7,11,22,0.85)"; ctx.fillRect(16, top, V.W - 32, boxH);
+        ctx.fillStyle = "#cbd2e0";
+        out.forEach((l, i) => ctx.fillText(l, 28, top + 20 + i * lineH));
+      }
       ctx.restore();
     }
   }
@@ -18433,7 +18692,8 @@ AF.barrowDowns = (() => {
   const groundIds = () => [...new Set(["bd_stone", ...PATH_CELL.values(), ...DARK_CELL.values(),
                                        ...CRACK, ...BONE, ...GRIT])];
   return { sceneId, world, player, blockers, cairns: CAIRNS, scatter: SCATTER, update, draw, SPAWN,
-           isPath, roadTiles: () => new Set(PATH), EXIT_NORTH, GATE_BAND, autotileGaps, groundIds,
+           isPath, roadTiles: () => new Set(PATH), EXIT_NORTH, GATE_BAND, SEAL_BAND,
+           autotileGaps, groundIds,
            darkTiles: () => new Set(DARK),
            region: "barrow_downs",
            arrivals: { from_forest: { x: SPAWN.x, y: SPAWN.y, facing: "down" } } };

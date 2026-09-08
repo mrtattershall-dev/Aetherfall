@@ -1,0 +1,153 @@
+# Aetherfall — change report, 0.34.0 → 0.35.0
+
+The first boss anything can reach, and a hole in the map on the way to him.
+
+```
+Files / sections changed:
+  aetherfall.html
+    · AF.build        — 0.34.0 -> 0.35.0 (save schema unchanged at 4)
+    · AF.barrowDowns  — south wall sealed; SEAL_BAND; stepCustodian(); banner note
+    · AF.content      — the Custodian's warning (canon) + two draft aftermath lines
+    · AF.battle       — backdrop props are region-bound, not only the ground
+    · AF.battle.todo  — the "triggered by nothing" line is no longer true of him
+    · AF.selftest     — 383 -> 387
+
+Rules touched (AF-R-###):
+  AF-R-203   his warning draws clean; my aftermath prose draws marked
+  AF-R-303   the barrow's fight uses the barrow's own props
+  AF-R-622   the fight starts through AF.encounter.trigger, so it is unfleeable
+  AF-R-710   defeat leaves custodianDefeated false — he is still there
+  AF-R-811   custodianDefeated is the act model's second gate
+  AF-R-1006  every rect named is already declared and verified
+  AF-R-1007  act structure and the aftermath wording are the user's, not taken
+
+FLEXIBLE choices made (AF-R-802 requires stating these):
+  1. He SPEAKS and the fight starts — not an AF.conversation. Cancel would let
+     a player decline a boss (0.9.0 choice 4) and standing in the band would
+     re-fire it every frame, the loop 0.9.0 fixed. His canon settles it: he
+     does not bargain.
+  2. He is at the end of the barrow trail, not in `deep_barrow`. The sealed
+     south end IS the seal; he is the reason it is sealed. No new region.
+  3. The aftermath is narration on the scene's own result banner, not the
+     speech bubble — the bubble draws a speaker's name and there is nobody
+     left to attribute it to.
+  4. The banner note WRAPS, measured against the real font. The vendor log
+     trims and the bubble runs off; neither suits a line meant to be read once.
+  5. The seal band is the trail's last three rows (31-33), the shape and
+     placement of GATE_BAND five rows above it.
+
+Assumptions made:
+  None. Every band, flag, rect and frame count came from the build or from a
+  pack's own files.
+
+Self-test: 387/387, three consecutive runs, identical
+Boot faults: 0
+Verified how: HEADLESS CHROMIUM (real canvas, real atlas decode), plus a
+  screenshot of the fight. NOT device-verified.
+```
+
+## The baseline, and why this harness is worth trusting
+
+Before any change: **383/383, three runs, 0 boot faults**, in headless Chromium
+driving the real build. `AI_HANDOFF_0_7_0_PATCH` records three tests failing
+under Playwright for an environmental reason — `drawImage` rejecting a stubbed
+atlas image. That does not happen here: the atlas is a real embedded data URI
+decoded by a real browser, so all 383 pass. The harness is stricter than the one
+the handoff describes, not weaker.
+
+## 1 — The south wall was open
+
+Full write-up in `docs/audits/FINDING_barrow_south_leak.md`. In short: the edge
+guards were copied from `AF.forestRoute`, whose south edge really does open onto
+this scene, and the comment came with them. Here the trail leaves at columns
+13-14, not 8-9, and the south opens onto nothing. `AF.collision.move` never
+clamps to the world, so the two-tile gap was a way out of the map. Measured
+before the fix: a player walking down columns 8-9 was **1,472px past the world's
+bottom edge and still moving**.
+
+The wall is one span now. The test drives the real collision step down every
+column and out to both sides, so a hole anywhere in any wall fails it.
+Revert-proven at columns 8 and 9.
+
+## 2 — The Custodian
+
+`custodian_of_the_seal` has been declared, phased and startable since 0.7.0 and
+triggered by nothing, which `AF.battle.todo()` has reported every version since.
+That is the fourth instance of this project's most-repeated shape — the door in
+0.6.18, the Items backend before 0.10.0, saving before 0.11.0.
+
+He stands at the seal band: the trail's last three rows, against the sealed
+south end. The module header has said since 0.7.0 that the way down is closed.
+He is the reason it is closed.
+
+**The test that matters is the walk-up.** The gate ambush's own test teleports
+into its band, which proves the trigger responds but not that the trail reaches
+it — the distinction handoff §6 exists for. This one holds a direction and lets
+the real update loop carry the party: 74 frames from the gate band to the fight.
+Reverting the wiring reports *"walked 600 frames to y=2175 and met nothing"* —
+y=2175 of 2176, the full trail, stopped at the wall that was open this morning.
+
+## 3 — What felling him does, and what it does not
+
+`custodianDefeated` is the flag the AUTHORED table already names, so:
+
+- **Losing does not clear it.** Defeat revives the party at the Hold's gate
+  (AF-R-710) with the flag false. He is still standing when they come back.
+- **Winning advances the act model** — and *does not move the seal floor*, which
+  the test asserts rather than something tidier.
+
+`AF.integrity.gateOf` returns the floor of the next *uncleared* gate, and the
+gate ahead of this one is `firstBossDefeated`: declared, first in `FLOORS` at
+88, and **set by nothing in the game** — only by self-tests. While it is unmet
+it is always the first uncleared gate, so the floor stays 88 however the later
+flags fall.
+
+The wiring behind the Custodian is correct and live: with the earlier gate met,
+felling him moves the floor 74 → 58, and the test proves that too. The day
+something sets `firstBossDefeated`, his consequence arrives with no further
+work.
+
+**Not fixed here.** Whether the Custodian *is* the first boss is act structure —
+canon, and the user's call (AF-R-1007). Setting a second flag on his death to
+make a number move would be answering that quietly. Recorded in
+`AF.battle.todo()`.
+
+## 4 — The fight was happening in a wood
+
+Found by screenshotting the battle, not by a test — every draw path "runs clean"
+either way, which is `AUDIT_0_9_3`'s open finding 6 exactly.
+
+`backdropRects()` bound the **ground** to the region (`barrow_downs` →
+`forest_dirt`) and left the props and scatter hardcoded to the Herbalist pack's
+oaks and bushes. So the barrow's boss fight drew barrow dirt and then stood a
+forest on it.
+
+0.10.0 wrote the fix down in advance — *"because the region owns its tileset
+(AF-R-303) the barrow's fight can look like the barrow by naming different
+rects"*. Every rect now named is already declared, verified and in the atlas,
+placed by `AF.barrowDowns` itself: `ruin_a`, `ruin_b`, `deadtree_a`, `skulls`,
+`grave_b` over `bd_bone_*`, `bd_grit_*`, `bd_crack_3`. No new art, no atlas
+change. Screenshot: `docs/audits/custodian_0_35_0.png`.
+
+## Left for you
+
+- **The Custodian is drawn as an ent — a tree.** `seal_custodian` resolves
+  through the `boss` family to `craftpix_ent`'s Ent3, which was chosen before
+  there was any canon for him. Your canon is a knight whose armour rusted into
+  his flesh. The art contradicts the text, and this is the most visible thing in
+  the screenshot. Two routes, both yours to pick: map him to the existing
+  `knight` family (Skeleton3, already packed and verified — free, but he then
+  looks like the barrow's trash knight), or pack Skeleton2 as his own family
+  (an atlas pass; the pack is verified 46/46 and on hand).
+- **Is he the first boss?** Nothing sets `firstBossDefeated`, so the act model
+  cannot advance off 88. See §3.
+- **The aftermath prose is my draft**, marked and listed in
+  `AF.text.placeholders()`. Your beat, my sentences — approve, rewrite or strike.
+- **The sigil is narrated and is not an item.** Canon describes the party
+  leaving with it; the bag does not receive it.
+- **Balance is still a model, not a player.** He is 230 HP with one phase
+  against a level-1 Aren at 54. The todo's line stands: *"no AI_PATTERNS or
+  PHASES numbers have been played against a real party."* This is where that
+  stops being theoretical.
+- **Combat is still visually inert** — AF-R-705 / `AF.effects` remains a
+  phantom, so his phase turn and every ability resolve with no animation.
