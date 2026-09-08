@@ -10,7 +10,7 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**552 of 552 checkable rects verify against their own source packs.** All seven
+**558 of 558 checkable rects verify against their own source packs.** All seven
 enemy families and every declared CraftPix and Franuka pack now account for.
 Two packs cannot be used at all until their terms are found, and three declared
 assets draw nothing — see the finding.
@@ -23,7 +23,7 @@ assets draw nothing — see the finding.
 | Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
 | Farm scatter and trail | 21 | **21/21** |
-| Nobles / Blacksmith characters | 28 | **28/28** |
+| Nobles / Blacksmith / Glassblower | 34 | **34/34** |
 | Franuka UI | 19 | **19/19** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
 | Guild Hall character walks | 72 | **72/72** |
@@ -61,7 +61,7 @@ assets draw nothing — see the finding.
 | Herbalist's Hut (craftpix 742958) | `craftpix_herbalist` | 93 rects | **93/93 byte-exact** |
 | Nobles Manor (craftpix 653272) | `craftpix_nobles` | 18 frames | **18/18** |
 | Blacksmith House (craftpix 741016) | `craftpix_blacksmith` | 10 frames | **10/10** |
-| Glassblower's Workshop (craftpix 692491) | `craftpix_glassblower` | — | in progress |
+| Glassblower's Workshop (craftpix 692491) | `craftpix_glassblower` | 6 frames | **6/6** |
 | Training Arena (craftpix 626036) | — | — | new, undeclared |
 | Adventure Fantasy Book (craftpix 137102) | — | — | new, undeclared |
 | Fishing Village (craftpix 885927) | `craftpix_fishing` | — | uploaded twice, byte-identical |
@@ -233,15 +233,20 @@ verified at 100%, so none of them can have been affected — a false negative ca
 only hide a match, never invent one — but any future re-cut check should compare
 visible pixels, not raw bytes.
 
-### Nobles Manor, Blacksmith, Glassblower — 28/28 character frames
+### Nobles Manor, Blacksmith, Glassblower — 34/34
 
 | Animation | Pack | Source | Result |
 |---|---|---|---|
 | `guard_idle` | `craftpix_nobles` | `Guard.png` row 0, 32×48 | **12/12** |
 | `aristo_idle` | `craftpix_nobles` | `aristocrate_idle.png` row 0, 64×56 | **6/6** |
 | `girl_idle` | `craftpix_blacksmith` | `Girl_animation.png` row 0, 32×48 | **10/10** |
+| `door_shop` | `craftpix_glassblower` | `Doors_windows_animations.png`, 48×32 | **6/6** |
 
-Each frame count and cell size matches the `source` string exactly.
+Each frame count and cell size matches the `source` string exactly. The shop
+door is the one that is not a row: its six frames sit in a **column** at x=0,
+y = 32, 128, 224, 320 … on a 192×576 sheet. The build's string says only
+"measured 48x32, 6 frames" and never claims a row, so it is right — but it is
+the case where assuming the house convention would have found nothing.
 
 ### `craftpix_herbalist` — 93/93, six provenance forms
 
