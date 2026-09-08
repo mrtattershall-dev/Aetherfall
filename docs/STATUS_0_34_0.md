@@ -61,6 +61,11 @@ packed row is wasted.
 | **Rendering is checked by execution, not appearance** | 0.6.19, restated 0.9.3 | unchanged by anything static. The three bugs 0.9.3 existed to chase were all of this kind, and only a phone caught them. |
 | **15 indexed-but-uncited rules never reviewed one at a time** | 0.6.19 (as 26) | **cannot be checked here** — see below. |
 
+The enforcement census, which the 0.12.5 addendum lists as PENDING and stale at
+23, is re-measured in `docs/audits/GAPS_0_12_5_RECHECK.md`: **89 cited, 24
+machine-enforced** at 0.34.0. Three ids gained a check since 0.7.0 — AF-R-203,
+AF-R-331 and AF-R-1001.
+
 ## The document that is missing, and why it matters most
 
 **`docs/RULES_INDEX.md` is not in this repo.** The build's own header comment
@@ -88,7 +93,9 @@ Also absent, in rough order of usefulness:
 2. `PASS_PLAN.pdf` — cited by the scene registry and the placeholder inventory.
 3. Change reports for 0.12.6 → 0.34.0. Twenty-two versions with no record of
    what changed or which FLEXIBLE choices were made, which AF-R-802 requires be
-   stated. (0.9.0 and 0.12.5 are here.)
+   stated. (0.9.0 and 0.12.5 are here.) The addenda and handoff patches stop at
+   0.12.5 too — both are explicitly *sections and patches*, never merged into
+   the base documents they amend.
 4. Any audit after 0.9.3.
 
 `docs/AI_HANDOFF.md` is now in the repo, and it is the document that makes the
