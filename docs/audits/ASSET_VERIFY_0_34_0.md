@@ -1,4 +1,4 @@
-# Asset verification — twenty-one packs against the 0.34.0 atlas
+# Asset verification — twenty-four packs against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -10,12 +10,14 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**364 of 364 rects that could be checked are byte-exact.** Two packs cannot be
-used at all until their terms are found.
+**410 of 410 enemy, icon, UI, ground and character rects are byte-exact.** All
+seven enemy families are now verified against their own packs. Two packs cannot
+be used at all until their terms are found, and **`craftpix_farm` is the one
+pack that does not fully account for** — see the separate finding.
 
 | Family of check | Rects | Result |
 |---|---|---|
-| Enemy sprites (beast, boss, vermin, slime, revenant) | 131 | **131/131** |
+| Enemy sprites — all seven families | 177 | **177/177** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
 | Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
@@ -27,6 +29,7 @@ used at all until their terms are found.
 
 | Pack | Declared as | Checked | Verdict |
 |---|---|---|---|
+| Top-Down Pixel Skeletons (craftpix 870078) | `craftpix_skeletons` | 46 frames | **46/46 byte-exact** |
 | Fantasy RPG Icon Pack (Franuka) | `franuka_icons` | 88 icons | **88/88 byte-exact** |
 | RPG UI Pack (Franuka) | `franuka_ui` | 19 rects | **19/19 located byte-exact** |
 | Free Slime Mobs (craftpix 788364) | `craftpix_slimes` | 31 frames | **31/31 byte-exact** |
@@ -47,7 +50,10 @@ used at all until their terms are found.
 | RPG UI Elements (craftpix 149019) | — | — | **PSD only, no PNG** |
 | Free Top-Down Orc (craftpix 363992) | — | — | new, undeclared |
 | Free Top-Down Trees (craftpix 385863) | — | — | new, undeclared |
-| Top-Down Cute Farm Animals (craftpix 213727) | — | — | ambiguous, see below |
+| Farm with Animals (craftpix 471853) | `craftpix_farm` | 21 rects | **12 located, 9 not — see finding** |
+| Adventure Fantasy Book (craftpix 137102) | — | — | new, undeclared |
+| Fishing Village (craftpix 885927) | `craftpix_fishing` | — | uploaded twice, byte-identical |
+| Top-Down Cute Farm Animals (craftpix 213727) | — | — | **not** `craftpix_farm`; see 471853 above |
 
 ### `franuka_icons` — 88/88, the 0.9.3 result reproduced
 
@@ -160,6 +166,53 @@ Death   5 frames   sheet 640x512    5 cols of 128
 The declared frame cell (128), the row order (front = row 0) and the trim are
 all confirmed against the artist's own files. This is the check that would catch
 a spritesheet mis-cut in one step.
+
+### `craftpix_skeletons` — 46/46, completing all seven enemy families
+
+```
+Skeleton1 (husk)    idle 4 union, attack 9 union, hurt 4 union, death 6 per-frame
+Skeleton3 (knight)  idle 4 union, attack 9 union, hurt 4 union, death 6 per-frame
+                                                            46/46 byte-exact
+```
+
+Both are 0.10.0 families and both follow the 0.10.0 rule. With these, **every
+one of the atlas's 177 enemy frames has been verified against its own pack**:
+husk 23, knight 23, revenant 29, beast 21, boss 27, slime 31, vermin 23.
+
+### `craftpix_farm` — the pack is right, the accounting is not
+
+The ledger's `craftpix_farm` is **Top-Down Farm with Animals (471853)**, not the
+similarly named *Cute Farm Animals (213727)* uploaded earlier — that earlier
+ambiguity is resolved. Its assets carry no per-file provenance (only "from the
+Farm pack"), so all 24 rects were searched for byte-exact across the archive:
+
+```
+12 located byte-exact   pebble_a-c, trail_dirt_a-e, trail_break_a/c, trail_chip_c
+                        (Ground_grass_details.png and Road.png)
+ 3 fully transparent    trail_break_b, trail_chip_a, trail_chip_b  -> see finding
+ 9 not located          tuft_a-f, trail_weed_a, trail_weed_c, trail_weed_d
+```
+
+The nine are real art — 11 to 47 opaque pixels each — and simply do not appear
+byte-exact anywhere in the pack they are credited to. A library-wide search is
+the way to settle whether they came from a sibling pack or were recoloured, and
+that result is **not yet in**; until it is, this is an open question, not an
+accusation. Note the build's own comment says the two packs "share a palette
+family, which is checked below rather than assumed", so a deliberate recolour is
+a live possibility.
+
+### THE FINDING — three declared assets draw nothing
+
+`trail_break_b`, `trail_chip_a` and `trail_chip_b` are **fully transparent**:
+real rects, real provenance, `verified: true`, and zero opaque pixels. All three
+are reached by live draw calls, including one unconditional blit in Rowan's Hold
+that paints nothing every frame.
+
+A scan of all 730 rects finds exactly these three and no others, and none under
+1% ink, so the finding is bounded. Full write-up, screen cost, the probable
+source cells, and the self-test that would catch the class:
+**`docs/audits/FINDING_blank_rects.md`**. Reproduce with
+`python3 tools/blank-rects.py`.
 
 ### `x500.png` — the missing file was never missing, and the pack proves it
 
