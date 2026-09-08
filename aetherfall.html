@@ -276,8 +276,8 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.34.0",
-  builtOn:   "2026-09-07",
+  version:   "0.35.0",
+  builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
 });
@@ -12380,6 +12380,42 @@ AF.selftest = (() => {
       return bad.length === 0 || bad.join("; ");
     });
 
+    t("no column of the barrow lets the player walk out of the world", () => {
+      /*  0.35.0. The south wall carried a two-tile hole at columns 8-9,
+          inherited from AF.forestRoute's guard along with the comment that
+          describes the forest's south edge. AF.collision.move tests blockers
+          and never clamps to the world, so a gap in a wall is not a scenic
+          edge — it is a way out of the map.
+
+          This drives the REAL collision step, from inside the map, down every
+          column and out to both sides, rather than asserting against the one
+          gap that was wrong. A hole cut anywhere in any of the four walls
+          fails it. Reverting the fix fails it at columns 8 and 9.          */
+      const d = AF.barrowDowns, T = AF.const.TILE, W = d.world;
+      const escaped = [];
+      const run = (sx, sy, dx, dy, steps) => {
+        const p = { x: sx, y: sy, collision: { w: 32, d: 20 } };
+        for (let i = 0; i < steps; i++) AF.collision.move(p, dx, dy, d.blockers);
+        return p;
+      };
+      for (let tx = 0; tx * T < W.w; tx++) {
+        const cx = tx * T + 32;
+        const south = run(cx, W.h - 2 * T, 0,  8, 120);
+        const north = run(cx, 2 * T,       0, -8, 120);
+        if (south.y > W.h) escaped.push(`south@col${tx} reached y=${Math.round(south.y)} of ${W.h}`);
+        if (north.y < 0 && !(cx >= d.EXIT_NORTH.x && cx <= d.EXIT_NORTH.x + d.EXIT_NORTH.w))
+          escaped.push(`north@col${tx} reached y=${Math.round(north.y)}`);
+      }
+      for (let ty = 0; ty * T < W.h; ty++) {
+        const cy = ty * T + 32;
+        const west = run(2 * T,       cy, -8, 0, 120);
+        const east = run(W.w - 2 * T, cy,  8, 0, 120);
+        if (west.x < 0)   escaped.push(`west@row${ty} reached x=${Math.round(west.x)}`);
+        if (east.x > W.w) escaped.push(`east@row${ty} reached x=${Math.round(east.x)} of ${W.w}`);
+      }
+      return escaped.length === 0 || escaped.slice(0, 4).join("; ");
+    });
+
     t("forest south leads to the barrow and the barrow leads back (AF-R-905)", () => {
       const saved = { scene: AF.state.sceneId, region: AF.state.region,
                       x: AF.state.player.x, y: AF.state.player.y, f: AF.state.player.facing, mode: AF.state.mode };
@@ -18142,15 +18178,36 @@ AF.barrowDowns = (() => {
              depthRule: a.depthRule || "ysort" };
   }).filter(Boolean);
   const gapX0 = 8 * T, gapX1 = 10 * T;
-  //  0.7.0 — the south end opens onto the barrow downs. The trail leaves at
-  //  columns 8-9 (see PATH's last segment), so the guard is split there.
-  const sGapX0 = 8 * T, sGapX1 = 10 * T;
+  /*  0.35.0 — THE SOUTH WALL IS SOLID, and for six versions it was not.
+
+      This guard was copied from AF.forestRoute — whose south edge really does
+      open onto this scene — and the comment came with it: "the south end opens
+      onto the barrow downs. The trail leaves at columns 8-9". Neither half is
+      true here. This scene's south end opens onto nothing (`deep_barrow` has
+      no map, as the module header says), and its trail leaves at columns
+      13-14: PATH's last segment is seg(13, 12, 14, 33).
+
+      So the wall carried a two-tile hole at columns 8-9 that led nowhere and
+      that nothing else closed. `AF.collision.move` tests blockers and never
+      clamps to the world, and no edgeExit watched that gap — the scene
+      declared an EXIT_SOUTH and never used it, which is the copy's third
+      inherited part.
+
+      Measured in headless Chromium before the fix: a player walking down
+      columns 8-9 crossed the world's bottom edge and kept going, 1,472px out
+      and still moving when the probe stopped. Down the real trail at columns
+      13-14 they stopped correctly at the wall — which is why walking the map
+      the way a player walks it never found this.
+
+      Geometry is not logic (handoff §6), and a hole nobody walks into is
+      still a hole. The wall is one span now. When `deep_barrow` is built the
+      gap comes back at the TRAIL's columns and an edgeExit comes back with
+      it — both together, or neither.                                      */
   blockers.push({ x:-32, y:0, w:32, h:world.h }, { x:world.w, y:0, w:32, h:world.h },
                 { x:0, y:-32, w:gapX0, h:32 }, { x:gapX1, y:-32, w:world.w - gapX1, h:32 },
-                { x:0, y:world.h, w:sGapX0, h:32 }, { x:sGapX1, y:world.h, w:world.w - sGapX1, h:32 });
+                { x:0, y:world.h, w:world.w, h:32 });
 
   const EXIT_NORTH = Object.freeze({ x: gapX0, y: -8, w: gapX1 - gapX0, h: 24 });
-  const EXIT_SOUTH = Object.freeze({ x: sGapX0, y: world.h - 16, w: sGapX1 - sGapX0, h: 48 });
   //  The gate band: the ambush fires when the player first walks past it.
   const GATE_BAND = Object.freeze({ x: 13 * T - 32, y: 26 * T, w: 3 * T, h: 2 * T });
 
