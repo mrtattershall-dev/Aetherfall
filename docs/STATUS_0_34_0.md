@@ -85,12 +85,19 @@ Also absent, in rough order of usefulness:
    explicitly *a section to append*, and says so in its first paragraph; it
    names but does not reproduce the AF-R-524 discussion and the pre-0.7.0
    FLEXIBLE choices, "all of which remain in force".
-2. `PASS_PLAN.pdf` — cited by the scene registry and the placeholder inventory;
-   open question 1 (the forest's name) is tracked against it.
-3. Change reports for 0.9.1 → 0.34.0. Twenty-five versions with no record of
+2. `PASS_PLAN.pdf` — cited by the scene registry and the placeholder inventory.
+3. Change reports for 0.12.6 → 0.34.0. Twenty-two versions with no record of
    what changed or which FLEXIBLE choices were made, which AF-R-802 requires be
-   stated.
+   stated. (0.9.0 and 0.12.5 are here.)
 4. Any audit after 0.9.3.
+
+`docs/AI_HANDOFF.md` is now in the repo, and it is the document that makes the
+index gap matter: its §2 step 0 is the diff, and its header tells every session
+to treat `RULES_INDEX.md` as the authority. Note the handoff's own header is
+stale — it names `aetherfall-0.6.19.html`, branch `rowans-hold-undead`, save
+schema 3, against a build stamping **0.34.0 · rowans-hold · save v4**.
+`AI_HANDOFF_0_7_0_PATCH.md` fixes the first two of those and is explicitly a
+patch, not a replacement; the two have never been merged.
 
 ## The battle draw scale is decided
 
@@ -108,16 +115,28 @@ That last line is the answer to the arithmetic the inventory posed: the packs'
 64px and 128px are padding around small art, so neither number was ever the
 draw size. Seven enemy families are declared and 177 enemy frames are packed.
 
-## Two of the inventory's nine decisions are already answered
+## Most of the inventory's nine decisions are already answered
 
-Both were closed in the build without the documents being updated:
+All of these were closed in the build without the inventory being updated:
 
+- **The tone sentence, and all 118 names.** `CHANGE_REPORT_0_12_5` records the
+  118 mechanical names drafted, approved, and moved into a new `NAMES` table
+  registered as `name.<id>` and drawn without a marker. Measured in the 0.34.0
+  source: **135 approved, 6 provisional.** The inventory's step 1 — "88% of the
+  placeholder count cleared in one exchange" — happened.
+- **The forest's name** (its open question 1, "still open across five
+  versions"): **The Outwood**. The party is **Aren, Bulwark, Zephyr, Cass**.
 - **The battle draw scale** — settled at 0.10.0 (above).
 - **The Guild Hall floor / `x500.png`** — settled at 0.7.4, and not by either
   answer the inventory offered. The file genuinely is not in the pack, but the
   pack's `Interior_1st_floor.tmx` declares it and **no tile on either floor
   uses it**; the floor comes from `Walls_interior.png`, which ships. Verified
   against the archive in `docs/audits/ASSET_VERIFY_0_34_0.md`.
+- **The barrow art** — `craftpix_undead` supplies it, 54 rects verified.
+
+What is left of that document is six provisional names — `barrow_downs`,
+`deep_barrow`, `ashen_reach`, `hold_supplies`, `guild_quartermaster`,
+`rowans_smithy` — and the RPG Ultimate licence, which only you can find.
 
 ## What the placeholder inventory is worth now
 
