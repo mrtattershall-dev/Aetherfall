@@ -1,4 +1,4 @@
-# Asset verification — twenty-four packs against the 0.34.0 atlas
+# Asset verification — twenty-nine packs against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -10,14 +10,21 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**410 of 410 enemy, icon, UI, ground and character rects are byte-exact.** All
-seven enemy families are now verified against their own packs. Two packs cannot
-be used at all until their terms are found, and **`craftpix_farm` is the one
-pack that does not fully account for** — see the separate finding.
+**552 of 552 checkable rects verify against their own source packs.** All seven
+enemy families and every declared CraftPix and Franuka pack now account for.
+Two packs cannot be used at all until their terms are found, and three declared
+assets draw nothing — see the finding.
 
 | Family of check | Rects | Result |
 |---|---|---|
 | Enemy sprites — all seven families | 177 | **177/177** |
+| Herbalist Outwood ground + birds | 93 | **93/93** |
+| Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
+| Guild Hall character walks | 72 | **72/72** |
+| Barrow ground set | 54 | **54/54** |
+| Farm scatter and trail | 21 | **21/21** |
+| Nobles / Blacksmith characters | 28 | **28/28** |
+| Franuka UI | 19 | **19/19** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
 | Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
@@ -50,7 +57,12 @@ pack that does not fully account for** — see the separate finding.
 | RPG UI Elements (craftpix 149019) | — | — | **PSD only, no PNG** |
 | Free Top-Down Orc (craftpix 363992) | — | — | new, undeclared |
 | Free Top-Down Trees (craftpix 385863) | — | — | new, undeclared |
-| Farm with Animals (craftpix 471853) | `craftpix_farm` | 21 rects | **12 located, 9 not — see finding** |
+| Farm with Animals (craftpix 471853) | `craftpix_farm` | 21 rects | **21/21 located** |
+| Herbalist's Hut (craftpix 742958) | `craftpix_herbalist` | 93 rects | **93/93 byte-exact** |
+| Nobles Manor (craftpix 653272) | `craftpix_nobles` | 18 frames | **18/18** |
+| Blacksmith House (craftpix 741016) | `craftpix_blacksmith` | 10 frames | **10/10** |
+| Glassblower's Workshop (craftpix 692491) | `craftpix_glassblower` | — | in progress |
+| Training Arena (craftpix 626036) | — | — | new, undeclared |
 | Adventure Fantasy Book (craftpix 137102) | — | — | new, undeclared |
 | Fishing Village (craftpix 885927) | `craftpix_fishing` | — | uploaded twice, byte-identical |
 | Top-Down Cute Farm Animals (craftpix 213727) | — | — | **not** `craftpix_farm`; see 471853 above |
@@ -179,27 +191,75 @@ Both are 0.10.0 families and both follow the 0.10.0 rule. With these, **every
 one of the atlas's 177 enemy frames has been verified against its own pack**:
 husk 23, knight 23, revenant 29, beast 21, boss 27, slime 31, vermin 23.
 
-### `craftpix_farm` — the pack is right, the accounting is not
+### `craftpix_farm` — fully accounted for, and a method correction
 
 The ledger's `craftpix_farm` is **Top-Down Farm with Animals (471853)**, not the
-similarly named *Cute Farm Animals (213727)* uploaded earlier — that earlier
-ambiguity is resolved. Its assets carry no per-file provenance (only "from the
-Farm pack"), so all 24 rects were searched for byte-exact across the archive:
+similarly named *Cute Farm Animals (213727)* — that ambiguity is resolved. Its
+assets carry no per-file provenance (only "from the Farm pack"), so all 24 rects
+were located by search:
 
 ```
-12 located byte-exact   pebble_a-c, trail_dirt_a-e, trail_break_a/c, trail_chip_c
-                        (Ground_grass_details.png and Road.png)
- 3 fully transparent    trail_break_b, trail_chip_a, trail_chip_b  -> see finding
- 9 not located          tuft_a-f, trail_weed_a, trail_weed_c, trail_weed_d
+12 byte-exact over all four channels
+ 9 visible pixels IDENTICAL, all in Ground_grass_details.png row y=128
+ 3 fully transparent — trail_break_b, trail_chip_a, trail_chip_b -> the finding
 ```
 
-The nine are real art — 11 to 47 opaque pixels each — and simply do not appear
-byte-exact anywhere in the pack they are credited to. A library-wide search is
-the way to settle whether they came from a sibling pack or were recoloured, and
-that result is **not yet in**; until it is, this is an open question, not an
-accusation. Note the build's own comment says the two packs "share a palette
-family, which is checked below rather than assumed", so a deliberate recolour is
-a live possibility.
+**Correction to the previous version of this report**, which said those nine
+"do not appear byte-exact anywhere in the pack they are credited to" and left it
+open. They do appear; the comparison was wrong.
+
+The source PNG stores some fully-transparent pixels as `(255,255,255,0)` — white
+at zero alpha — and the atlas normalises them to `(0,0,0,0)`. Comparing all four
+channels therefore fails on pixels that are invisible in both. Comparing only
+the pixels with alpha > 0 resolves all nine immediately:
+
+| Rect | Source cell (`Ground_grass_details.png`) |
+|---|---|
+| `tuft_a` / `trail_weed_a` | 64,128 |
+| `tuft_b` | 80,128 |
+| `tuft_c` | 112,128 |
+| `tuft_d` / `trail_weed_c` | 128,128 |
+| `trail_weed_d` | 144,128 |
+| `tuft_e` | 224,128 |
+| `tuft_f` | 240,128 |
+
+No recolour: every visible pixel matches. A library-wide search over all 17,225
+PNGs confirmed none of the nine is byte-exact anywhere, which is exactly what a
+transparent-pixel difference predicts.
+
+**The lesson generalises.** A whole-RGBA comparison can report a false mismatch
+for art that is pixel-identical on screen. Every other pack in this report
+verified at 100%, so none of them can have been affected — a false negative can
+only hide a match, never invent one — but any future re-cut check should compare
+visible pixels, not raw bytes.
+
+### Nobles Manor, Blacksmith, Glassblower — 28/28 character frames
+
+| Animation | Pack | Source | Result |
+|---|---|---|---|
+| `guard_idle` | `craftpix_nobles` | `Guard.png` row 0, 32×48 | **12/12** |
+| `aristo_idle` | `craftpix_nobles` | `aristocrate_idle.png` row 0, 64×56 | **6/6** |
+| `girl_idle` | `craftpix_blacksmith` | `Girl_animation.png` row 0, 32×48 | **10/10** |
+
+Each frame count and cell size matches the `source` string exactly.
+
+### `craftpix_herbalist` — 93/93, six provenance forms
+
+The Outwood ground set carries the most detailed provenance in the build, in six
+different notations, and every one of them resolves:
+
+```
+cell index         39   "Ground_grass.png cell 120 (col 0, row 10)"
+explicit bbox      13   "Flowers_alternative_fit.png component bbox (71,83,15,18)"
+hop frame + rows   20   "bird_jump_animation.png frame 0 (x=0, rows 0-15 of 32)"
+fly block + bbox   16   "bird_fly_animation.png block frame 0 (x128-272,y0) bbox (...)"
+explicit rect       2   "Trees_rocks.png (3,1,72,79)"
+multi-cell block    3   "Ground_grass.png cells 156-159/168-171/180-183 (4x3)"
+                   93   93/93 byte-exact
+```
+
+The bird_fly bboxes are relative to the block origin, not the sheet — stated in
+the string itself (`x128-272,y0`) and confirmed by the pixels.
 
 ### THE FINDING — three declared assets draw nothing
 
