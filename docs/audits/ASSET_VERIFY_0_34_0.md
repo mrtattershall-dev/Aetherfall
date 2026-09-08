@@ -1,4 +1,4 @@
-# Asset verification — thirteen packs against the 0.34.0 atlas
+# Asset verification — seventeen packs against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -10,15 +10,16 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**213 of 213 rects that could be checked are byte-exact.** Two packs cannot be
-used at all until their terms are found, and one supplied pack turns out not to
-be the one the build drew from.
+**263 of 263 rects that could be checked are byte-exact.** Every pack the build
+declares art from has now been verified against its own source. Two packs cannot
+be used at all until their terms are found.
 
 | Family of check | Rects | Result |
 |---|---|---|
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
-| Enemy sprites (beast, boss, vermin) | 71 | **71/71** |
+| Enemy sprites (beast, boss, vermin, slime) | 102 | **102/102** |
 | Barrow ground set | 54 | **54/54** |
+| Franuka UI | 19 | **19/19** |
 
 ---
 
@@ -27,9 +28,13 @@ be the one the build drew from.
 | Pack | Declared as | Checked | Verdict |
 |---|---|---|---|
 | Fantasy RPG Icon Pack (Franuka) | `franuka_icons` | 88 icons | **88/88 byte-exact** |
+| RPG UI Pack (Franuka) | `franuka_ui` | 19 rects | **19/19 located byte-exact** |
+| Free Slime Mobs (craftpix 788364) | `craftpix_slimes` | 31 frames | **31/31 byte-exact** |
 | Free Undead Tileset (craftpix 695666) | `craftpix_undead` | 54 rects | **54/54 byte-exact** |
 | Top-Down Pixel Ent (craftpix 838021) | `craftpix_ent` | 48 frames | **48/48 byte-exact** |
 | Giant Rat — 4 Direction (craftpix 415491) | `craftpix_rats` | 23 frames | **23/23 byte-exact** |
+| Free Chapel (craftpix 477438) | *removed 0.19.0* | — | correctly gone, see below |
+| Predator Plant Mobs (craftpix 284465) | — | — | new, undeclared — drop-in shaped |
 | Pixel Art Slime Enemies (craftpix 743043) | — | — | **not the pack in the build** |
 | RPG Ultimate GUI | — | — | **no licence of any kind — still blocked** |
 | Free Raven Fantasy Icons | — | — | **no licence in the archive** |
@@ -152,7 +157,83 @@ The declared frame cell (128), the row order (front = row 0) and the trim are
 all confirmed against the artist's own files. This is the check that would catch
 a spritesheet mis-cut in one step.
 
-### THE FINDING — the slime pack is a different product
+### `craftpix_slimes` — 31/31, and the earlier finding resolves
+
+The **"Free Slime Mobs — Pixel Art Top Down Sprite Pack" (craftpix 788364)** was
+supplied after the finding below, and it verifies completely:
+
+```
+Slime1 Idle     6 frames   sheet 384x256
+Slime1 Attack  10 frames   sheet 640x256
+Slime1 Hurt     5 frames   sheet 320x256
+Slime1 Death   10 frames   sheet 640x256
+                           31/31 byte-exact, per-frame trim throughout
+```
+
+Per-frame everywhere, as expected for a family declared at 0.25.0. The build's
+ledger named the right pack all along — the earlier archive was simply a
+different product with a confusingly similar name. **The finding below is
+closed, and is kept because the near-miss is the point: two CraftPix slime packs
+ship the same `Slime1/2/3` folder shape, and only a pixel check tells them
+apart.**
+
+### `franuka_ui` — 19/19, and the build's own claims reproduce
+
+The UI rects carry their provenance in prose rather than an index table, so each
+was located by searching the full pack: for all 19 `ui_*` rects, every one of the
+631 files under `Individual files/1x/` was scanned for a byte-exact occurrence.
+
+```
+franuka_ui: 19/19 rects located byte-exact inside a full-pack file
+```
+
+All three offsets the build asserts at 0.7.8 land exactly where it says:
+
+| Claimed | Found |
+|---|---|
+| `ui_panel` = BGbox_01A at 6,6 | BGbox_01A.png at 6,6 |
+| `ui_barframe` = Slider02_Box at 0,3 | Slider02_Box.png at 0,3 |
+| `ui_banner` = BannerSmall_01A at 0,2 | BannerSmall_01A.png at 0,2 |
+
+The archive is also the full pack the comment claims, not the four-file demo:
+`Individual files/` at 1x, 2x and 3x, plus `Examples/`, `Fonts/`, a reference
+sheet and three composed sheets.
+
+Two cuts are worth writing down because nothing else records them: **`ui_bar_red`
+is `Button_02A_Normal.png` at 4,10** — a button, not a slider — and
+**`ui_cur_right` is `Checkbox_01A_On.png` at 3,3**. Both are byte-exact, so they
+are deliberate reuse rather than mistakes, but neither is where you would look.
+`ui_slot_focus` is likewise `Slot_01_Necklace`.
+
+### The chapel is fully gone — the 0.9.3 dead-weight finding is closed
+
+`AUDIT_0_9_3` measured `bld_chapel` at 20,193 pixels, "87% of all dead weight",
+and deferred removal to the next atlas pass. That pass was 0.19.0. The rect is
+gone, `craftpix_chapel` is out of the credit ledger, and the only trace left in
+the build is the comment recording why:
+
+> 0.19.0 — craftpix_chapel removed. AF-C-003 took the chapel out of the world in
+> 0.6.21 and its building art stayed in the atlas for thirteen versions, 20,193
+> dead pixels, with its pack credited for art nobody could see.
+
+The supplied chapel archive therefore has nothing to verify against, which is
+the correct outcome. The credit ledger is "every pack with art on screen" again.
+
+### Predator Plant Mobs — drop-in shaped, with one caveat
+
+Same structure as the golem and gnoll packs: `PNG/Plant1..3/Without_shadow/`,
+four direction rows, Idle / Attack / Hurt / Death present, cell **64**.
+
+```
+Plant1  idle 4, hurt 5, death 10, run 8, walk 6   — all clean at 64
+Plant1  attack 448x256                            — content crosses the cell boundary
+```
+
+The attack sheet divides evenly at 64 (7×4) but its content does not stay inside
+the cells, the same trap the orc attack sheets have. Slicing it on a flat grid
+clips the lunge; it needs measuring per frame.
+
+### THE EARLIER FINDING — the first slime pack was a different product
 
 The build declares `craftpix_slimes` as **"Free Slime Mobs — Pixel Art Top Down
 Sprite Pack"** and cuts the `slime` family's 31 frames from `Slime1/…`. The
@@ -169,9 +250,8 @@ exact matches: NONE
 
 So the art in the build did not come from this archive. Nothing is wrong with
 the build — its provenance strings are internally consistent and its credit
-ledger names the pack it actually used. The consequence is narrower and worth
-recording: **the slime frames remain unverified against source**, and this
-archive cannot verify them. The "Free Slime Mobs" pack is the one to send.
+ledger names the pack it actually used. **Confirmed by the section above: the
+real "Free Slime Mobs" pack verifies 31/31.**
 
 ### The farm-animals ambiguity
 
@@ -204,13 +284,14 @@ boundary. Idle and walk cut cleanly at 64; the attack sheets do not, and slicing
 them on a flat 64 grid clips the swing. Those sheets need measuring per frame.
 The rows are clean throughout, so the 4-direction split is unaffected.
 
-## Licences — eleven clear AF-R-1001, two do not
+## Licences — fifteen clear AF-R-1001, two do not
 
-The ten CraftPix archives each ship `License.txt` (or `license.txt`) carrying
+The thirteen CraftPix archives each ship `License.txt` (or `license.txt`) carrying
 the standard file-licence link (`https://craftpix.net/file-licenses/`) and no extra credit
 text — the same terms the build already records for its twelve other CraftPix
-packs, `required: false`. The Franuka icon pack ships its own terms and is
-already credited `required: true` for the CC BY 4.0 link its licence demands.
+packs, `required: false`. Both Franuka packs ship their own terms
+(`License and details.txt` in the UI pack) and are credited `required: true`
+for the links their licences demand.
 
 **`rpgultimate.zip` — confirmed blocked.** `AUDIT_0_9_3` recorded it as the one
 pack in the whole library shipping no terms file. Re-checked exhaustively here,
