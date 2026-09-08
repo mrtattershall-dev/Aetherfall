@@ -1,4 +1,4 @@
-# Asset verification — eight packs against the 0.34.0 atlas
+# Asset verification — thirteen packs against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -7,13 +7,18 @@ them. This is that check, applied to the enemy sprites and the barrow ground.
 
 Method: decode the atlas out of `aetherfall.html`, crop each declared rect, and
 compare it pixel-for-pixel against the source the asset's own `source` string
-names — for enemies, row 0 (front) of the state sheet trimmed to the alpha
-bounding box, exactly as `AF.enemyArt` says it cut them; for ground tiles, the
-named 16px cell index of the named sheet.
+names — row 0 (front) of the named state sheet for enemies, the named 16px cell
+index for ground tiles, the numbered individual file for icons.
 
-**77 of 77 rects that could be checked are byte-exact.** Two packs cannot be
+**213 of 213 rects that could be checked are byte-exact.** Two packs cannot be
 used at all until their terms are found, and one supplied pack turns out not to
 be the one the build drew from.
+
+| Family of check | Rects | Result |
+|---|---|---|
+| Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
+| Enemy sprites (beast, boss, vermin) | 71 | **71/71** |
+| Barrow ground set | 54 | **54/54** |
 
 ---
 
@@ -21,14 +26,88 @@ be the one the build drew from.
 
 | Pack | Declared as | Checked | Verdict |
 |---|---|---|---|
+| Fantasy RPG Icon Pack (Franuka) | `franuka_icons` | 88 icons | **88/88 byte-exact** |
 | Free Undead Tileset (craftpix 695666) | `craftpix_undead` | 54 rects | **54/54 byte-exact** |
+| Top-Down Pixel Ent (craftpix 838021) | `craftpix_ent` | 48 frames | **48/48 byte-exact** |
 | Giant Rat — 4 Direction (craftpix 415491) | `craftpix_rats` | 23 frames | **23/23 byte-exact** |
 | Pixel Art Slime Enemies (craftpix 743043) | — | — | **not the pack in the build** |
 | RPG Ultimate GUI | — | — | **no licence of any kind — still blocked** |
 | Free Raven Fantasy Icons | — | — | **no licence in the archive** |
+| Golem (craftpix 625807) | — | — | new, undeclared — drop-in shaped |
+| Top-Down Pixel Gnolls (craftpix 393827) | — | — | new, undeclared — drop-in shaped |
+| RPG UI Elements (craftpix 149019) | — | — | **PSD only, no PNG** |
 | Free Top-Down Orc (craftpix 363992) | — | — | new, undeclared |
 | Free Top-Down Trees (craftpix 385863) | — | — | new, undeclared |
 | Top-Down Cute Farm Animals (craftpix 213727) | — | — | ambiguous, see below |
+
+### `franuka_icons` — 88/88, the 0.9.3 result reproduced
+
+`AUDIT_0_9_3` ran this check and got 88/88. Twenty-five versions later it still
+holds, against the same source of truth: the numbered individual files under
+`Base set/Individual icons (16x16)/` and `Expansions/03 - Spells/…`, never the
+spritesheet. The build's own comment explains why that distinction matters —
+v2.1 "rearranged the main sheet", and slicing it by position "produced a staff
+for a healing potion and a tomato for clear water".
+
+```
+57 item icons      via ICON_INDEX          57/57 exact
+31 ability icons   via ABILITY_ICON_INDEX  31/31 exact
+                                           88/88, 0 mismatches
+```
+
+Both index tables resolve cleanly, so a re-cut can still be checked against the
+pack's own numbering rather than by eye. This is the check that carries a
+mandatory CC BY 4.0 credit link behind it, and `franuka_icons` is in the ledger
+with `required: true`.
+
+### `craftpix_ent` — 48/48, and the trim rule is not one rule
+
+The ent pack backs two families: `beast` from `Ent1` and `boss` from `Ent3`,
+48 frames between them. All 48 are byte-exact — but only once the right trim is
+applied, and **the build uses two different trims**:
+
+| Family | Declared | idle / attack / hurt | death |
+|---|---|---|---|
+| `beast`, `boss` | 0.10.0 | **union bbox** across the state's frames | **per-frame bbox** |
+| `vermin` | 0.25.0 | per-frame bbox | per-frame bbox |
+
+That is not drift, it is two recorded decisions meeting. 0.10.0 cut every state
+to a union box so a looping animation would not jitter. 0.24.0 added `death`,
+and 0.25.0 changed placement to "follow the ART, rounded up to the 32px
+half-grid, instead of a flat 64x64" — because, as the source says, "the slime's
+last death frame is a 6px puddle, and a fixed 64 box floated it a whole
+half-grid above its own pixels". A dying sprite shrinks, so a union box is
+exactly wrong for it.
+
+**Correction to this document.** Its first version described the enemy method as
+"trimmed to the alpha bounding box" and reported 23/23 for `craftpix_rats` on
+that basis. The count was right and `vermin` is genuinely per-frame throughout —
+but the description was a half-rule, and applying it to the ent pack produced 26
+spurious mismatches before the real rule was measured. Stated properly, the
+enemy total is 71/71 across three families.
+
+### Golem and Gnolls — no work needed to declare them
+
+Both ship the same shape `AF.enemyArt` already consumes: `PNG/<Name>1..3/
+Without_shadow/`, four direction rows, front on row 0, with Idle / Attack /
+Hurt / Death present.
+
+```
+Golem1   cell 128   idle 4, attack 9, hurt 4, death 8   (also run 8, walk 8)
+Gnoll1   cell  64   idle 4, attack 10, hurt 4, death 6  (also run 8, walk 6)
+```
+
+Adding either is two entries in `PACK_OF` / `SRC_OF` plus a credit-ledger row —
+"adding a nineteenth husk needs no art work", as the module says. Both cells are
+sizes the build already handles (128 for ent and rat, 64 for skeleton and ghost).
+
+### RPG UI Elements (craftpix 149019) — nothing to measure
+
+Five files: `license.txt`, `Description.txt`, and **three layered `.psd`
+sources**. No PNG at any size. Nothing here can be measured or declared without
+flattening the PSDs first, which is an art decision rather than a measuring
+one. Not blocked on licence — it ships one — but blocked on there being no
+raster art in the archive.
 
 ### `craftpix_undead` — confirmed, at cell precision
 
@@ -125,12 +204,13 @@ boundary. Idle and walk cut cleanly at 64; the attack sheets do not, and slicing
 them on a flat 64 grid clips the swing. Those sheets need measuring per frame.
 The rows are clean throughout, so the 4-direction split is unaffected.
 
-## Licences — six clear AF-R-1001, two do not
+## Licences — eleven clear AF-R-1001, two do not
 
-The six CraftPix archives each ship `License.txt` carrying the standard
-file-licence link (`https://craftpix.net/file-licenses/`) and no extra credit
+The ten CraftPix archives each ship `License.txt` (or `license.txt`) carrying
+the standard file-licence link (`https://craftpix.net/file-licenses/`) and no extra credit
 text — the same terms the build already records for its twelve other CraftPix
-packs, `required: false`.
+packs, `required: false`. The Franuka icon pack ships its own terms and is
+already credited `required: true` for the CC BY 4.0 link its licence demands.
 
 **`rpgultimate.zip` — confirmed blocked.** `AUDIT_0_9_3` recorded it as the one
 pack in the whole library shipping no terms file. Re-checked exhaustively here,
