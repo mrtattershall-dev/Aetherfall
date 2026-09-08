@@ -276,7 +276,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.35.1",
+  version:   "0.35.2",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -5182,7 +5182,15 @@ AF.battle = (() => {
       outcome: null,
       returnMode: AF.state.mode,
       returnSceneId: AF.state.sceneId,
-      onEnd: typeof o.onEnd === "function" ? o.onEnd : null
+      onEnd: typeof o.onEnd === "function" ? o.onEnd : null,
+      /*  0.35.2 — lines the fight OPENS with, after "X appears." An authored
+          fight's speaker has to be heard inside the battle, because the
+          overworld speech bubble is neither ticked nor drawn in battle mode:
+          the Custodian's warning went into AF.speech and played after he was
+          dead. Found by the 0.35.1 audit, not by the screenshot — the
+          screenshot was of the battle screen, which is exactly where speech
+          is not.                                                          */
+      opening: [].concat(o.opening || []).filter(l => typeof l === "string" && l)
     };
     beginRound();
     AF.mode.set("battle");
@@ -5877,7 +5885,8 @@ AF.battle = (() => {
   AF.events.on("input:confirm", () => { try { if (AF.state.mode === "battle" && isActive()) choose(); } catch (e) { AF.fault("battle-ui", e); } });
   AF.events.on("input:cancel",  () => { try { if (AF.state.mode === "battle" && isActive()) back(); } catch (e) { AF.fault("battle-ui", e); } });
   AF.events.on("battle:started", () => { uiReset(); ui.log.length = 0; ui.enemyMs = 0; ui.lastActor = null;
-    say(`${st.enemies.map(e => e.name).join(", ")} ${st.enemies.length > 1 ? "appear" : "appears"}.`); });
+    say(`${st.enemies.map(e => e.name).join(", ")} ${st.enemies.length > 1 ? "appear" : "appears"}.`);
+    for (const l of st.opening || []) say(l); });
 
   function update(dt) {
     if (!isActive()) return;
@@ -6127,6 +6136,25 @@ AF.battle = (() => {
     return out + "…";
   }
 
+  /*  0.35.2 — a log line that does not fit WRAPS, it is not clipped. `clip`
+      was written for one-line combat notices; the Custodian's warning is
+      the first log entry that is a sentence, and clip cut his only line to
+      "Turn back, while I …" — visible in a screenshot, invisible to every
+      test. Measured against the real font. A single word wider than the
+      panel still clips, because breaking a word is worse than an ellipsis. */
+  function wrapLines(ctx, s, maxW) {
+    s = String(s);
+    if (!ctx.measureText || ctx.measureText(s).width <= maxW) return [s];
+    const rows = []; let cur = "";
+    for (const word of s.split(" ")) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (ctx.measureText(next).width > maxW && cur) { rows.push(cur); cur = word; }
+      else cur = next;
+    }
+    if (cur) rows.push(cur);
+    return rows.map(r => clip(ctx, r, maxW));
+  }
+
   /*  0.33.0 — THE BATTLE BARS DREW NONE OF THEIR OWN ART.
 
       Read the version this replaces: it fetched `ui_barframe_dark` into `fr`
@@ -6293,9 +6321,13 @@ AF.battle = (() => {
       ctx.fillStyle = "#8f88a6";
       ctx.fillText(`round ${st.round} · ${st.kind}`, 10 * S, logTop);
       ctx.fillStyle = "#cfc8dd";
-      if (lines > 1)
-        ui.log.slice(-(lines - 1)).forEach((line, i) =>
-          ctx.fillText(clip(ctx, line, V.W - 20 * S), 10 * S, logTop + (i + 1) * 9 * S));
+      if (lines > 1) {
+        //  Wrap first, THEN take the newest rows that fit — so a long line
+        //  costs rows rather than being cut, and the room budget stays honest.
+        const rows = ui.log.flatMap(line => wrapLines(ctx, line, V.W - 20 * S));
+        rows.slice(-(lines - 1)).forEach((row, i) =>
+          ctx.fillText(row, 10 * S, logTop + (i + 1) * 9 * S));
+      }
     }
 
     /*  PARTY STRIP — bottom of the screen, name + hp + mp, and the acting
@@ -6783,10 +6815,11 @@ AF.encounter = (() => {
 
   /*  Starts an authored battle. `kind:"authored"` is what makes it unfleeable,
       so a story fight cannot become escapable by accident.                    */
-  function trigger(id, onEnd) {
+  function trigger(id, onEnd, extra) {
     const enc = AUTHORED.get(id);
     if (!enc) AF.rules.refuse("AF-R-622", `unknown authored encounter "${id}"`);
-    return AF.battle.start({ enemies: enc.enemies, kind: "authored", onEnd });
+    //  `extra` may carry `opening` (0.35.2); it can never override enemies or kind.
+    return AF.battle.start({ ...(extra || {}), enemies: enc.enemies, kind: "authored", onEnd });
   }
 
   /*  The random path. Returns null when nothing fires — the common case — so
@@ -12583,6 +12616,12 @@ AF.selftest = (() => {
       const met = AF.battle.isActive()
         ? { kind: AF.battle.active().kind, foes: AF.battle.active().enemies.map(e => e.enemyId) } : null;
       const endedAt = AF.state.player.y;
+      /*  0.35.2 — his warning must be somewhere the player can SEE while he is
+          alive. The battle log is that surface; the speech bubble is not
+          drawn in battle, and a line parked there plays after he is dead
+          (the 0.35.1 audit's finding). Both halves asserted.              */
+      const spoke  = met && AF.battle.ui.state().log.some(l => /merciful/.test(l));
+      const parked = AF.speech.current();
       if (AF.battle.isActive()) AF.battle.end("aborted");
       AF.transition.settle();
       AF.content.REGIONS.barrow_downs.encounterRate = rate;
@@ -12594,7 +12633,9 @@ AF.selftest = (() => {
       if (!met) return `walked ${steps} frames to y=${Math.round(endedAt)} and met nothing`;
       if (met.kind !== "authored") return `the Custodian ran as "${met.kind}", not authored`;
       const want = AF.content.AUTHORED.custodian_of_the_seal.enemies;
-      return String(met.foes) === String(want) || `foes were ${met.foes}, table says ${want}`;
+      if (String(met.foes) !== String(want)) return `foes were ${met.foes}, table says ${want}`;
+      if (!spoke) return "his warning is not in the battle log when the fight opens";
+      return !parked || `a speech line was left parked for after the fight: "${parked.text || parked}"`;
     });
 
     t("the Custodian fires once and winning lowers the seal floor", () => {
@@ -18509,8 +18550,12 @@ AF.barrowDowns = (() => {
     const inside = player.x >= SEAL_BAND.x && player.x <= SEAL_BAND.x + SEAL_BAND.w &&
                    player.y >= SEAL_BAND.y && player.y <= SEAL_BAND.y + SEAL_BAND.h;
     if (!inside) return;
-    AF.speech.say(AF.content.nameOf("custodian_of_the_seal"),
-                  AF.text.get("custodian.warning"));
+    /*  0.35.2 — his warning opens the BATTLE LOG, not the speech bubble. The
+        bubble is neither ticked nor drawn in battle mode, so a line said the
+        frame the fight starts sits unseen until the fight ends and then plays
+        over the aftermath — or, on a loss, at Rowan's Hold's gate. The log is
+        the one surface that is on screen when he speaks.                   */
+    const warning = `${AF.content.nameOf("custodian_of_the_seal")}: “${AF.text.get("custodian.warning")}”`;
     AF.encounter.trigger("custodian_of_the_seal", (s) => {
       enc.grace = 4 * T;
       if (s.outcome !== "victory") { enc.banner = { summary: s, untilMs: 2600 }; return; }
@@ -18524,7 +18569,7 @@ AF.barrowDowns = (() => {
         AF.text.get("placeholder.custodian.seal.1"),
         AF.text.get("placeholder.custodian.seal.2")
       ] };
-    });
+    }, { opening: [warning] });
   }
 
   AF.events.on("scene:entered", (e) => { if (e && e.next === sceneId) {

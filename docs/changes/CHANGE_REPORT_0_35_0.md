@@ -202,3 +202,62 @@ ride with the repack the 0.12.5 README already asked for rather than adding
 another appended block. Recorded in `AF.battle.todo()`, not done here.
 
 Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
+
+---
+
+# 0.35.2 — the warning is heard while he is alive
+
+`docs/audits/custodian_0_35_2.png`
+
+A quick three-agent audit of the 0.34.0 → 0.35.1 diff (one auditor on the
+barrow scene, one on `AF.enemyArt` and the backdrop, one on the new tests).
+Two real bugs, one root; one cosmetic note; everything else confirmed fine.
+
+## The bug the screenshot could not see
+
+The Custodian's warning went into `AF.speech` the same frame the fight started.
+The speech bubble is neither ticked nor drawn in battle mode, so the line sat
+unseen and then played **after he was dead** — over the aftermath note on a win,
+or at Rowan's Hold's gate on a loss. And because the walk-up test drove the same
+path, the suite left the line parked at boot, so a New Game opened with
+*"Custodian of the Seal: Turn back…"* in the starting scene.
+
+The 0.35.0 screenshot was of the battle screen — exactly the surface speech is
+not on — which is why looking did not catch it.
+
+**Fix:** `AF.battle.start` takes `opening` lines, printed to the battle log
+after *"X appears."*; `AF.encounter.trigger` passes them through (it can never
+override enemies or kind). The log is the one surface on screen when he speaks.
+The walk-up test now asserts the warning is in the log when the fight opens
+**and** that nothing is parked in speech. Revert-proven: without `opening` it
+fails *"his warning is not in the battle log when the fight opens"*.
+
+## And then the log clipped him
+
+The fix made a second thing visible: the log trims every entry to one row with
+an ellipsis, and his only line became *"Turn back, while I …"*. `clip` was
+written for combat notices; his was the first log entry that is a sentence.
+The log now wraps a long entry into rows, then takes the newest rows that fit,
+so a sentence costs rows rather than being cut and the room budget stays
+honest. A single word wider than the panel still clips.
+
+## Confirmed fine by the auditors
+
+- `sGapX0`/`sGapX1`/`EXIT_SOUTH` leave no dangling reference in the barrow.
+- `stepCustodian` fires exactly once per band entry: `AF.battle.start` sets
+  state synchronously, and on a loss the defeat transition is active until the
+  scene changes.
+- `SEAL_BAND` (x 800–992, y 1984–2176) brackets trail columns 13–14, rows 31–33.
+- `fam` in the battle draw is only ever used for sprite lookups, including
+  `deathMs`, which *must* follow the art (knight has 6 death frames, Ent3 12).
+- All ten barrow backdrop rect ids exist; `drawBackdrop` assumes no count.
+- Both `NAMES` keys exist — `seal_custodian` and `custodian_of_the_seal`.
+- No duplicate text ids.
+
+## Cosmetic, not fixed
+
+The treeline loop advances by `p.w × 4 − 52`, and `grave_b` is 13px wide, so it
+advances 0 and draws on top of `skulls`. Terminates, overlaps. Swap `grave_b`
+for a wider prop in the next art pass.
+
+Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
