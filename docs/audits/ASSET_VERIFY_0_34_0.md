@@ -1,4 +1,4 @@
-# Asset verification — twenty-nine packs against the 0.34.0 atlas
+# Asset verification — every declared pack, against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -10,25 +10,31 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**558 of 558 checkable rects verify against their own source packs.** All seven
-enemy families and every declared CraftPix and Franuka pack now account for.
-Two packs cannot be used at all until their terms are found, and three declared
+**614 of 614 checkable rects verify against their own source packs, and all
+seventeen packs in the credit ledger are now accounted for.** Two *un*declared
+packs cannot be used at all until their terms are found, and three declared
 assets draw nothing — see the finding.
 
 | Family of check | Rects | Result |
 |---|---|---|
 | Enemy sprites — all seven families | 177 | **177/177** |
-| Herbalist Outwood ground + birds | 93 | **93/93** |
+| Herbalist Outwood ground, birds, trail fringe | 97 | **97/97** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
 | Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
 | Farm scatter and trail | 21 | **21/21** |
 | Nobles / Blacksmith / Glassblower | 34 | **34/34** |
 | Franuka UI | 19 | **19/19** |
+| Tavern characters | 18 | **18/18** |
+| Road and trail tiles | 18 | **18/18** |
+| Fishing Village characters | 20 | **20/20** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
 | Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
 | Franuka UI | 19 | **19/19** |
+| Tavern characters | 18 | **18/18** |
+| Road and trail tiles | 18 | **18/18** |
+| Fishing Village characters | 20 | **20/20** |
 
 ---
 
@@ -248,7 +254,46 @@ y = 32, 128, 224, 320 … on a 192×576 sheet. The build's string says only
 "measured 48x32, 6 frames" and never claims a row, so it is right — but it is
 the case where assuming the house convention would have found nothing.
 
-### `craftpix_herbalist` — 93/93, six provenance forms
+### The last three declared packs
+
+| Pack | Checked | Result |
+|---|---|---|
+| `craftpix_road` (574220) | 14 ground/road tiles | **14/14**, all on the 16px grid of `Road1_grass.png` and `Ground_grass.png` |
+| `craftpix_tavern` (666104) | `grug_idle` 12, `host_idle` 6 | **18/18** |
+| `craftpix_fishing` (885927) | `oldman_idle` 10, `oldman_orders` 10 | **20/20** — but see below |
+
+`grug_idle`'s string is exact to the pixel: *"Animation_watcher.png — 384x48, 12
+frames of 32x48, trimmed to 21x32"*, and the sheet, the frame count and the
+21×32 trim all check out.
+
+The four `trail_grass_*` tiles are not in the road pack and are not supposed to
+be — they are declared `craftpix_herbalist`, and the 0.13.5 comment says so
+(*"The supplied Herbalist ground sheet has exact grass-overhang cells"*). All
+four located there: `Water_coasts.png` and `Ground_grass.png`.
+
+### A provenance string that would misdirect a re-cut
+
+`craftpix_fishing`'s two animations verify **20/20**, in perfect reading order,
+so the art and the frame sequence are right. The layout they are described with
+is not:
+
+| | Provenance says | The pack ships |
+|---|---|---|
+| `Old_man_idle.png` | 320×32, 10 frames at 32×32 | **128×96** — 4 cols × 3 rows |
+| `Old_man_orders.png` | 320×32, 10 frames at 32×32 | **128×96** — 4 cols × 3 rows |
+
+The ten frames run left-to-right, top-to-bottom across the grid — atlas frame 0
+is row 0 col 0, frame 4 is row 1 col 0, frame 9 is row 2 col 1 — not along a
+single 320px strip, which does not exist in the archive.
+
+This matters more than the other two number slips recorded here (`bd_stone`'s
+"796 times", the Guild Hall floor's "190 cells"), because it describes the
+**layout**, and the stated purpose of these strings is that *"a re-cut can be
+checked against the pack's own files instead of by eye"*. A re-cutter following
+this one would look for a strip that is not there. The fix is a corrected
+string, not new art.
+
+### `craftpix_herbalist` — 97/97, six provenance forms
 
 The Outwood ground set carries the most detailed provenance in the build, in six
 different notations, and every one of them resolves:
@@ -260,7 +305,8 @@ hop frame + rows   20   "bird_jump_animation.png frame 0 (x=0, rows 0-15 of 32)"
 fly block + bbox   16   "bird_fly_animation.png block frame 0 (x128-272,y0) bbox (...)"
 explicit rect       2   "Trees_rocks.png (3,1,72,79)"
 multi-cell block    3   "Ground_grass.png cells 156-159/168-171/180-183 (4x3)"
-                   93   93/93 byte-exact
+      trail fringe    4   (Water_coasts.png, Ground_grass.png)
+                   97   97/97 byte-exact
 ```
 
 The bird_fly bboxes are relative to the block origin, not the sheet — stated in
