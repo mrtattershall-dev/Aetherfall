@@ -16,7 +16,7 @@ still carries its 0.9.3 figure.
 
 | Thing | 0.9.3 | 0.34.0 |
 |---|---|---|
-| Atlas | 512×1755, 295 rects | **512×2764, 546 rects** |
+| Atlas | 512×1755, 295 rects | **512×2764, 730 rects** |
 | Scenes registered | 5 | **7** (`inn_interior`, `inn_interior_room` added) |
 | Arrival ids | 4 kinds | 7 — `from_barrow from_chapel from_forest from_guildhall from_hold from_inn from_shop` |
 | Distinct `AF-R-###` cited in code | 88 | **89** |
@@ -26,10 +26,16 @@ still carries its 0.9.3 figure.
 | `t("…")` test declarations in source | — | 381 |
 | File | 1068 KB | 2771 KB (base64 atlas ≈ 1055 KB of it) |
 
-Atlas integrity re-checked statically and **clean**: no zero-sized rect, no two
-rects sharing identical coordinates, and the maximum extent of all 546 rects is
-exactly 512×2764 — the declared atlas size to the pixel, so nothing is out of
-bounds and no packed row is wasted.
+Atlas integrity re-checked and **clean**: no zero-sized rect, no rect out of
+bounds, no two rects sharing identical coordinates, and the maximum extent of
+all 730 rects is exactly 512×2764 — the declared atlas size to the pixel, so no
+packed row is wasted.
+
+> **Correction.** This table first read *546 rects*. That came from a
+> line-anchored `grep`, which silently missed the 184 rects that share a line
+> with another. The figure above is a real parse of the `RECTS` table
+> (`tools/atlas-report.py`), cross-checked against the decoded atlas image.
+> The other atlas figures were unaffected.
 
 ## Closed since the audits were written
 
@@ -85,6 +91,22 @@ Also absent, in rough order of usefulness:
    what changed or which FLEXIBLE choices were made, which AF-R-802 requires be
    stated.
 4. Any audit after 0.9.3.
+
+## The battle draw scale is decided
+
+`PLACEHOLDER_INVENTORY` calls this "the one technical decision blocking the
+most", gating every enemy sprite declaration and the atlas budget. **It was
+settled at 0.10.0** and the reasoning is in the source, under `18 · BATTLE`:
+
+> Enemies draw at WORLD_SCALE, not UI_SCALE, because they stand on world art.
+> … The sprites are pixel-block 1 with content boxes of 24x21 (skeleton),
+> 20x30 (ghost) and 39x50 (ent) against the party's 16x24 — the same pixel
+> density as the world, so there is no density break to record.
+> The 64 and 128 in the source files are frame canvas, not art.
+
+That last line is the answer to the arithmetic the inventory posed: the packs'
+64px and 128px are padding around small art, so neither number was ever the
+draw size. Seven enemy families are declared and 177 enemy frames are packed.
 
 ## What the placeholder inventory is worth now
 
