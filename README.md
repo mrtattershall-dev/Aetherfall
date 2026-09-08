@@ -18,7 +18,18 @@ that is the cheapest bug to prevent.
 The header comment carries the module map. Search for a banner to jump, e.g.
 `07b · STATS`, `18 · BATTLE`, `20e · THE INN`.
 
-Rule IDs of the form `AF-R-###` refer to `docs/RULES_INDEX.md` in the design bible.
+Rule IDs of the form `AF-R-###` refer to `docs/RULES_INDEX.md` in the design
+bible — **which is not yet in this repo.** Until it is, the step-0 check (diff
+the ids cited in code against the ids in the index) can only be run halfway:
+
+    ./tools/cited-rules.sh        # the 89 ids the build actually cites
+
+## Paperwork
+
+`docs/` holds the audits and reports as delivered, unedited. They describe
+builds 0.6.19 through 0.9.3 and the build here is 0.34.0, so read
+`docs/STATUS_0_34_0.md` first — it records which of their findings were
+re-measured against the current file and which are still open.
 
 ## Authority order (Bible §0)
 
