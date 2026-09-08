@@ -276,7 +276,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.35.0",
+  version:   "0.35.1",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -2684,6 +2684,30 @@ AF.enemyArt = (() => {
     sets.set(fam, byState);
   }
 
+  /*  0.35.1 — WHICH SPRITE, asked separately from WHICH TIER.
+
+      `family` was answering two questions: it picks the sprite set here, and
+      AF.content refuses the boot on it — every "boss" must declare PHASES and
+      nothing else may (AF-R-711). So the Custodian could not simply be moved
+      to the `knight` family to stop him being drawn as a tree: he carries
+      PHASES, and the load check would have refused him as a non-boss that
+      declares them.
+
+      That is the shape this codebase keeps naming — one name serving two
+      questions, as with ROAD_UNDER and AF-R-521, `placement` vs `drawSize`,
+      and spawnClearance. The handoff's rule is to split the questions rather
+      than soften the check, so `family` stays the tier and this map answers
+      the art. It is deliberately per-ENEMY, not per-family: the Ent art is
+      right for the Hollow Dragon and wrong for a rusted knight, and they
+      share a tier.
+
+      seal_custodian -> knight is the user's call (AF-R-1007), taken on the
+      canon they wrote: armour rusted into his flesh, not bark. Skeleton3 is
+      already packed and verified, so this costs no atlas rows. It does mean
+      he shares a sheet with barrow_knight until Skeleton2 is cut for him. */
+  const ART_OF = Object.freeze({ seal_custodian: "knight" });
+  const artFamily = (enemyId, fam) => ART_OF[enemyId] || fam;
+
   const has  = (fam) => sets.has(fam);
   const of   = (fam) => sets.get(fam) || null;
   const frame = (fam, st, t) => {
@@ -2699,7 +2723,7 @@ AF.enemyArt = (() => {
       exactly that and no caller needs to know the frame count.             */
   const deathMs = (fam) => { const s = sets.get(fam); return s ? s.death.length * FRAME_MS : 0; };
   const families = () => [...sets.keys()];
-  return { has, of, frame, families, deathMs, FRAME_MS, PACK_OF, SRC_OF };
+  return { has, of, frame, families, deathMs, artFamily, ART_OF, FRAME_MS, PACK_OF, SRC_OF };
 })();
 
 /* ============================================================================
@@ -5697,6 +5721,7 @@ AF.battle = (() => {
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
       "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
       "AF-R-811: firstBossDefeated is declared, sits first in AF.integrity's FLOORS at 88, and is set by NOTHING in the game — only by self-tests. It is the first uncleared gate, so the act model's floor cannot move off 88 no matter which later flags are set. Felling the Custodian sets custodianDefeated and changes no floor. Whether he IS the first boss is act structure, which is canon and not the engine's to decide (AF-R-1007)",
+      "seal_custodian and barrow_knight share Skeleton3: the boss and a random encounter in the same region are the same sprite. Skeleton2 is measured and NOT packed (idle union 29x23) and is the better fit for the MOB, not the boss — the Custodian's plate and horned helm are what the canon describes. Giving Skeleton2 to barrow_knight is an atlas pass, and the atlas has been append-grown since 0.6.18",
       "the Custodian's aftermath prose is a draft (placeholder.custodian.seal.1/2) written from the user's canon beat, not the user's own words; his warning line is theirs verbatim and is approved",
       "the sigil among the Custodian's remains is described in canon and exists as no item — the aftermath narrates it and the bag does not receive it",
       "vendor zones are authored against the collision mask, not measured against the room art — the prompt may not read next to the drawn counter (AF-R-708, needs a device screenshot)",
@@ -6178,7 +6203,7 @@ AF.battle = (() => {
           instances are AF.actors.create() output and carry only enemyId.
           Read it from the module's own ENEMIES map rather than reaching for
           AF.content, which does not answer this question.                  */
-      const fam = (ENEMIES.get(u.enemyId) || {}).family;
+      const fam = AF.enemyArt.artFamily(u.enemyId, (ENEMIES.get(u.enemyId) || {}).family);
       const down = u.hp <= 0;
       /*  0.24.0 — a defeated enemy plays its own death frames off its own
           clock, not the shared animT: two enemies killed a second apart must
@@ -12625,6 +12650,33 @@ AF.selftest = (() => {
                                             dragonDefeated: false, caedrinDefeated: false });
       return (standing === 74 && felled === 58)
         || `with the first gate met, felling him moves the floor ${standing} -> ${felled}, expected 74 -> 58`;
+    });
+
+    t("the Custodian is drawn as a knight and is still boss-tier", () => {
+      /*  0.35.1. Both halves matter and they are different questions.
+
+          ART: his canon is a knight whose armour rusted into his flesh, so he
+          must not resolve to the Ent sheet he inherited from the `boss`
+          family before he had any canon.
+
+          TIER: `family` is what AF.content refuses the boot on — every boss
+          declares PHASES and nothing else may (AF-R-711). If a future edit
+          "tidies" the override away by moving him to the knight FAMILY, the
+          load check refuses him as a non-boss carrying PHASES, and this test
+          says which of the two questions was answered wrongly.            */
+      const bad = [];
+      const art = AF.enemyArt.artFamily("seal_custodian", "boss");
+      if (art !== "knight") bad.push(`art family is "${art}", not knight`);
+      if (!AF.enemyArt.has(art)) bad.push(`no sprite set for "${art}"`);
+      const rec = [...AF.battle.ENEMIES.values()].find(e => e.id === "seal_custodian");
+      if (!rec) bad.push("seal_custodian is not in ENEMIES");
+      else if (rec.family !== "boss") bad.push(`tier is "${rec.family}", not boss — PHASES would refuse`);
+      if (!AF.content.PHASES.seal_custodian) bad.push("he lost his PHASES entry");
+      /*  An enemy with no override still gets its own family, so the map
+          cannot quietly become the answer for everything.                 */
+      if (AF.enemyArt.artFamily("hollow_dragon", "boss") !== "boss")
+        bad.push("the override leaked onto an enemy that declares none");
+      return bad.length === 0 || bad.join("; ");
     });
 
     t("the Custodian's warning is canon and the aftermath is still a draft", () => {

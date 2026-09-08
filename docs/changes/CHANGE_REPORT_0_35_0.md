@@ -131,14 +131,7 @@ change. Screenshot: `docs/audits/custodian_0_35_0.png`.
 
 ## Left for you
 
-- **The Custodian is drawn as an ent — a tree.** `seal_custodian` resolves
-  through the `boss` family to `craftpix_ent`'s Ent3, which was chosen before
-  there was any canon for him. Your canon is a knight whose armour rusted into
-  his flesh. The art contradicts the text, and this is the most visible thing in
-  the screenshot. Two routes, both yours to pick: map him to the existing
-  `knight` family (Skeleton3, already packed and verified — free, but he then
-  looks like the barrow's trash knight), or pack Skeleton2 as his own family
-  (an atlas pass; the pack is verified 46/46 and on hand).
+- ~~**The Custodian is drawn as an ent.**~~ **Done in 0.35.1** — see below.
 - **Is he the first boss?** Nothing sets `firstBossDefeated`, so the act model
   cannot advance off 88. See §3.
 - **The aftermath prose is my draft**, marked and listed in
@@ -151,3 +144,61 @@ change. Screenshot: `docs/audits/custodian_0_35_0.png`.
   stops being theoretical.
 - **Combat is still visually inert** — AF-R-705 / `AF.effects` remains a
   phantom, so his phase turn and every ability resolve with no animation.
+
+
+---
+
+# 0.35.1 — the Custodian is a knight
+
+`docs/audits/custodian_0_35_1.png`
+
+## `family` was answering two questions
+
+Mapping him to the `knight` family directly would have **refused the boot**.
+`AF.content` validates on `family`: every `"boss"` must declare PHASES and
+nothing else may (AF-R-711), so moving him out of the boss family makes him a
+non-boss carrying PHASES.
+
+That is the shape this codebase keeps naming — one name serving two questions,
+as with `ROAD_UNDER` and AF-R-521, `placement` vs `drawSize`, `spawnClearance`.
+The handoff's rule is to split the questions rather than soften the check:
+
+```
+family                      stays the TIER — what AF-R-711 refuses on
+AF.enemyArt.ART_OF          answers the ART — per enemy, not per family
+```
+
+Per-enemy is deliberate: the Ent sheet is right for the Hollow Dragon and wrong
+for a rusted knight, and they share a tier. A test asserts both halves, and that
+the override has not leaked onto an enemy that declares none.
+
+## Skeleton2, measured
+
+`docs/audits/skeletons_compared.png` — all three idle sets cut from the pack at
+`WORLD_SCALE` 4, union-bboxed the way 0.10.0 cuts a non-death state:
+
+| Sheet | Idle union | Drawn | State |
+|---|---|---|---|
+| Skeleton1 | 25×22 | 100×88 | packed, `husk` |
+| **Skeleton2** | **29×23** | **116×92** | **not packed** |
+| Skeleton3 | 28×27 | 112×108 | packed, `knight` — the Custodian now |
+
+**Recommendation: keep Skeleton3 for him, and give Skeleton2 to the mob.**
+
+Skeleton3 is full plate with a horned helm, a red cloak and a greatsword — it is
+the only one of the three that reads as *a knight*, which is what the canon
+says he was. Skeleton2 is lighter, pale, and carries a green gem in its
+forehead; it reads as a lesser or arcane undead, and the gem implies a story
+nobody has written. As the Custodian it would be a downgrade.
+
+The real problem the comparison exposes is not which skeleton the boss gets:
+
+> **`seal_custodian` and `barrow_knight` are both family `knight`.** The boss and
+> a random encounter in the same region are now the same sprite.
+
+Skeleton2 fixes that from the other end — it belongs to `barrow_knight`. That is
+an atlas pass, and the atlas has been append-grown since 0.6.18, so it wants to
+ride with the repack the 0.12.5 README already asked for rather than adding
+another appended block. Recorded in `AF.battle.todo()`, not done here.
+
+Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
