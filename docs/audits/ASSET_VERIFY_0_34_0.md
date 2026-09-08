@@ -1,4 +1,4 @@
-# Asset verification — seventeen packs against the 0.34.0 atlas
+# Asset verification — twenty-one packs against the 0.34.0 atlas
 
 Run with the source archives present, which is the only way this check runs at
 all. `AUDIT_0_9_3` records the same check for the 88 Franuka icons and says why
@@ -10,14 +10,14 @@ compare it pixel-for-pixel against the source the asset's own `source` string
 names — row 0 (front) of the named state sheet for enemies, the named 16px cell
 index for ground tiles, the numbered individual file for icons.
 
-**263 of 263 rects that could be checked are byte-exact.** Every pack the build
-declares art from has now been verified against its own source. Two packs cannot
-be used at all until their terms are found.
+**364 of 364 rects that could be checked are byte-exact.** Two packs cannot be
+used at all until their terms are found.
 
 | Family of check | Rects | Result |
 |---|---|---|
+| Enemy sprites (beast, boss, vermin, slime, revenant) | 131 | **131/131** |
 | Franuka icons (57 items + 31 abilities) | 88 | **88/88** |
-| Enemy sprites (beast, boss, vermin, slime) | 102 | **102/102** |
+| Guild Hall character walks | 72 | **72/72** |
 | Barrow ground set | 54 | **54/54** |
 | Franuka UI | 19 | **19/19** |
 
@@ -30,6 +30,8 @@ be used at all until their terms are found.
 | Fantasy RPG Icon Pack (Franuka) | `franuka_icons` | 88 icons | **88/88 byte-exact** |
 | RPG UI Pack (Franuka) | `franuka_ui` | 19 rects | **19/19 located byte-exact** |
 | Free Slime Mobs (craftpix 788364) | `craftpix_slimes` | 31 frames | **31/31 byte-exact** |
+| Guild Hall Asset Pack (craftpix 189780) | `craftpix_guild` | 72 rects | **72/72 byte-exact** |
+| Top-Down Pixel Ghost (craftpix 894297) | `craftpix_ghost` | 29 frames | **29/29 byte-exact** |
 | Free Undead Tileset (craftpix 695666) | `craftpix_undead` | 54 rects | **54/54 byte-exact** |
 | Top-Down Pixel Ent (craftpix 838021) | `craftpix_ent` | 48 frames | **48/48 byte-exact** |
 | Giant Rat — 4 Direction (craftpix 415491) | `craftpix_rats` | 23 frames | **23/23 byte-exact** |
@@ -38,6 +40,8 @@ be used at all until their terms are found.
 | Pixel Art Slime Enemies (craftpix 743043) | — | — | **not the pack in the build** |
 | RPG Ultimate GUI | — | — | **no licence of any kind — still blocked** |
 | Free Raven Fantasy Icons | — | — | **no licence in the archive** |
+| Mage Tower (craftpix 289481) | — | — | undeclared; settles x500, see below |
+| Slime Monsters (craftpix 510319) | — | — | a **third** distinct slime pack |
 | Golem (craftpix 625807) | — | — | new, undeclared — drop-in shaped |
 | Top-Down Pixel Gnolls (craftpix 393827) | — | — | new, undeclared — drop-in shaped |
 | RPG UI Elements (craftpix 149019) | — | — | **PSD only, no PNG** |
@@ -156,6 +160,82 @@ Death   5 frames   sheet 640x512    5 cols of 128
 The declared frame cell (128), the row order (front = row 0) and the trim are
 all confirmed against the artist's own files. This is the check that would catch
 a spritesheet mis-cut in one step.
+
+### `x500.png` — the missing file was never missing, and the pack proves it
+
+`PLACEHOLDER_INVENTORY` lists this as decision 5: *"find `x500.png` or authorise
+the substitution. Either answer closes it; only silence keeps it open."* Neither
+happened. **0.7.4 closed it a third way, by reading the pack's own layer data**,
+and with the Guild Hall and Mage Tower archives both present that reading can be
+checked:
+
+```
+x500.png present in either archive         no
+x500 declared in Interior_1st_floor.tmx    YES — firstgid 1, 368 tiles,
+                                           image "../../x500.png"
+tiles actually using gids 1-368            0     (1st floor AND 2nd floor)
+```
+
+So the tileset is declared, points two directories above the pack root — a leak
+from the artist's own project tree — and **no tile on either floor references
+it**. The floor is built from `Walls_interior.png`, and the build's structural
+claim about it is exactly right: the cells used are local ids 138/139/140,
+162/163/164, 186/187 — a 3×3 autotile block at **cols 18-20, rows 5-7**, with
+only the bottom-right corner unused.
+
+Five versions of documents recorded a missing-file defect for a file the map
+never asked for. The build's own note is the lesson worth keeping: *"a pack's own
+.tmx layer data is source, read it before concluding something is not there."*
+
+Two incidental counts in that note are slightly off — it says the Floor layer has
+190 cells and its centre tile is used 153 times; the file gives **188 cells** and
+**151**. Both off by two, both cosmetic: the diagnosis and the tile block are
+correct, and nothing derives from the counts.
+
+### `craftpix_guild` — 72/72, and its mirror argument holds
+
+Three character sheets, each 192×128 = 6 frames × 4 rows at 32×32, taken as
+whole untrimmed cells:
+
+```
+Citizen1_Walk.png   24 rects   Citizen2_Walk.png  24 rects
+Fighter2_Walk.png   24 rects                      72/72 byte-exact
+```
+
+The row order (down, left, right, up) is confirmed for all three. The build does
+not assume that order for Citizen2 — AF-R-923 forbids it — and instead argues it
+from measurement, including that *"rows 1 and 2 are a pixel-exact horizontal
+mirror of each other"*. Checked frame by frame: **6/6 mirror exactly.**
+
+### `craftpix_ghost` — 29/29, and the trim rule predicts it
+
+```
+Ghost1 Idle    4 frames    union bbox
+Ghost1 Attack 12 frames    union bbox
+Ghost1 Hurt    4 frames    union bbox
+Ghost1 Death   9 frames    per-frame bbox
+                           29/29 byte-exact
+```
+
+`revenant` was declared at 0.10.0, and it follows the 0.10.0 rule exactly —
+union for the looping states, per-frame for death. That rule was derived from
+the ent pack and has now predicted a pack it was not derived from.
+
+### Three slime packs, one right answer
+
+The library now holds **three distinct CraftPix slime products**, all shipping
+the identical `Slime1/Slime2/Slime3` × `With_shadow`/`Without_shadow` folder
+shape, all at cell 64:
+
+| Product | In the build |
+|---|---|
+| 788364 Free Slime Mobs | **yes** — `craftpix_slimes`, 31/31 verified |
+| 743043 Pixel Art Slime Enemies | no |
+| 510319 Slime Monsters | no |
+
+Frame counts are the cheapest discriminator: 788364's Slime1 death is 10 frames,
+510319's is 8. Nothing in a folder listing distinguishes them, which is why the
+near-miss below is kept.
 
 ### `craftpix_slimes` — 31/31, and the earlier finding resolves
 
@@ -284,9 +364,9 @@ boundary. Idle and walk cut cleanly at 64; the attack sheets do not, and slicing
 them on a flat 64 grid clips the swing. Those sheets need measuring per frame.
 The rows are clean throughout, so the 4-direction split is unaffected.
 
-## Licences — fifteen clear AF-R-1001, two do not
+## Licences — nineteen clear AF-R-1001, two do not
 
-The thirteen CraftPix archives each ship `License.txt` (or `license.txt`) carrying
+The seventeen CraftPix archives each ship `License.txt` (or `license.txt`) carrying
 the standard file-licence link (`https://craftpix.net/file-licenses/`) and no extra credit
 text — the same terms the build already records for its twelve other CraftPix
 packs, `required: false`. Both Franuka packs ship their own terms

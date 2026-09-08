@@ -108,6 +108,17 @@ That last line is the answer to the arithmetic the inventory posed: the packs'
 64px and 128px are padding around small art, so neither number was ever the
 draw size. Seven enemy families are declared and 177 enemy frames are packed.
 
+## Two of the inventory's nine decisions are already answered
+
+Both were closed in the build without the documents being updated:
+
+- **The battle draw scale** — settled at 0.10.0 (above).
+- **The Guild Hall floor / `x500.png`** — settled at 0.7.4, and not by either
+  answer the inventory offered. The file genuinely is not in the pack, but the
+  pack's `Interior_1st_floor.tmx` declares it and **no tile on either floor
+  uses it**; the floor comes from `Walls_interior.png`, which ships. Verified
+  against the archive in `docs/audits/ASSET_VERIFY_0_34_0.md`.
+
 ## What the placeholder inventory is worth now
 
 It was measured against 0.7.3 at 134 text ids; 0.9.3 counted 140. Neither number
