@@ -261,3 +261,74 @@ advances 0 and draws on top of `skulls`. Terminates, overlaps. Swap `grave_b`
 for a wider prop in the next art pass.
 
 Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
+
+---
+
+# 0.36.0 — Skeleton2 packed; the boss stops sharing a sheet
+
+`docs/audits/custodian_0_36_0.png` · `docs/audits/barrow_knight_0_36_0.png`
+
+Your call: **Skeleton3 is the boss, Skeleton1 and Skeleton2 are basic enemies.**
+Skeleton1 was already `husk`, so the work was packing Skeleton2 and giving the
+Custodian a sheet nothing else uses.
+
+## What moved
+
+```
+knight     Skeleton3 -> Skeleton2      barrow_knight, a random encounter
+custodian  (new)     -> Skeleton3      seal_custodian, via ART_OF
+```
+
+Skeleton3's 23 packed rects were **renamed** `enemy_knight_*` → `enemy_custodian_*`
+— same pixels, they were always Skeleton3 — and Skeleton2's 23 frames were cut
+and packed as the new `enemy_knight_*`. `barrow_knight` needed no edit: it is
+family `knight`, and `knight` now means Skeleton2.
+
+Cut on the rule its sibling families use (0.10.0): union bounding box across
+each looping state, per-frame for death, row 0 (front), `Without_shadow`.
+
+```
+atlas   512x2764 -> 512x2840   (+76 rows)
+rects   730 -> 753
+base64  +10,780 chars          file 2,876,607 bytes
+```
+
+**Verified byte-exact against the source pack, both ways:**
+
+```
+knight     <- Skeleton2   23/23
+custodian  <- Skeleton3   23/23
+```
+
+Atlas integrity re-checked: 753 rects, none zero-sized, none out of bounds, no
+duplicate coordinates, packed extent 512×2839 inside a declared 512×2840.
+
+## The test now guards the property, not the instance
+
+It asserted "his art family is knight", which this change would have made false
+while the underlying problem was fixed. It now asserts he has his own sheet and
+that **no other enemy resolves to it** — computed over every entry in `ENEMIES`
+rather than against `barrow_knight` by name, so a future mob pointed at his
+sheet fails too. Both sheet bindings are asserted by name as well.
+
+## One thing worth writing down
+
+The new rect literals went in as `[0, 2764, 29, 23]`. The game parses RECTS as
+real JavaScript, so that ran perfectly — but every other entry in the table is
+written `[450,1886,28,27]` with no spaces, and `tools/atlas-report.py` matches
+`[0-9,]+`. So the tool silently reported **730 rects and a packed extent of
+2764**, exactly as if the 23 new frames did not exist, while the game drew them
+correctly.
+
+A formatting difference the runtime does not care about made a verification
+tool lie in the safe-looking direction. Normalised to the file's convention.
+
+Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
+
+## Still open
+
+- **Is he the first boss?** Nothing sets `firstBossDefeated`, so felling him
+  advances no act gate. Act structure, still yours (AF-R-1007).
+- **The aftermath prose is my draft**, marked and listed in `AF.text.placeholders()`.
+- **The sigil is narrated and is not an item.**
+- **He has never been fought.** 230 HP, one phase, against a level-1 Aren at 54.
