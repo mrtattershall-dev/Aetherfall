@@ -292,7 +292,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.44.0",
+  version:   "0.45.0",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -1103,7 +1103,50 @@ AF.damage = (() => {
     AF.events.emit("damage:applied", { ...r, targetId: o.defender.id, hp: o.defender.hp });
     return r;
   }
-  return { resolve, apply };
+
+  /*  0.45.0 — HEALING, and the reason it lives here rather than in AF.battle.
+
+      Until this version healing was `t.hp + ability.power` — a flat number,
+      reading no stat, no level and no equipment. `mend` restored 45 HP at
+      level 1 and 45 HP at level 30. Measured against the survivor's own HP
+      curve that is 83% of the bar at level 1 and 13% at level 30: the healer
+      got strictly worse every level, and the support board's stat nodes
+      bought her nothing for the one job she has.
+
+      WHY `spr` AND NOT `mat`. Both were measured against `hpMax`, which grows
+      `20 + level*6 + vit*4`:
+
+          level  1 -> 30     Cass mat  11 -> 54  (x4.9)
+                             Cass spr  10 -> 68  (x6.8)
+                             Aren hp   54 -> 352 (x6.5)
+
+      `spr` tracks the HP pool almost exactly and `mat` does not, so a heal
+      scaled by `spr` holds its share of the bar at every level — measured at
+      a flat 56-58% for `mend` from level 1 to 30 — while the same formula on
+      `mat` still decays by half. It also gives SPIRIT its first real
+      mechanical job, which is the stat a healer should have been buying all
+      along.
+
+      PROPORTIONAL, not `1 + spr/20` like damage. Damage is divided by the
+      defender's ratio and lands on enemy pools that are authored per enemy
+      and do not grow with the player; a heal lands on a pool that grows every
+      level, so it has to grow with it rather than merely lean on it.
+
+      No crit, no resist, no defence: nothing in this game defends against
+      being healed, and inventing a roll here would make a healer's turn a
+      gamble the player cannot read.
+
+      `power` is therefore a COEFFICIENT now, not an amount — which is why the
+      five heal abilities were retuned in the same edit. A low-`spr` character
+      needs a larger one to reach the same share of a bar, so `steady`'s 40
+      being larger than `mend`'s 30 is the formula working, not a typo.    */
+  function heal(o) {
+    const { healer, power = 10 } = o;
+    const spr = (healer && typeof healer.stat === "function") ? healer.stat("spr") : 10;
+    return Math.max(1, Math.round(power * spr / 10));
+  }
+
+  return { resolve, apply, heal };
 })();
 
 /* ============================================================================
@@ -4583,7 +4626,7 @@ AF.data = (() => {
       (v2.1 "rearranged the main sheet"), and slicing it by position produced
       a staff for a healing potion and a tomato for clear water. The numbered
       files are the source of truth. Verified by render, not by test.       */
-  const ICON_INDEX = { anchored_greaves:67, ashen_focus:72, barrow_iron:306, barrow_key:109, barrow_plate:53, barrow_sword:12, chipped_knife:1, cinder_brand:342, clarity_leaf:284, clear_water:142, cloth_hood:49, cracked_focus:71, cracked_husk:192, custodian_token:270, dawn_flake:265, dawn_focus:73, draught_grand:86, draught_greater:85, draught_lesser:84, dull_fang:198, ember_charm:75, ember_grit:141, field_dressing:176, fire_flask:173, frost_flask:174, gloom_residue:184, grave_dust:138, guild_writ:246, hollow_core:258, iron_cap:50, luck_knot:269, padded_coat:52, pale_sinew:191, quiet_bell:281, rag_wrap:42, resonant_scale:97, rime_edge:340, rime_shard:99, rousing_ash:140, rousing_ember:139, salve_grand:83, salve_greater:82, salve_lesser:81, scale_harness:43, seal_breaker:16, seal_fragment:100, seer_circlet:58, static_jar:175, storm_filament:147, storm_pick:18, swift_boots:57, tattered_wing:183, warded_cloak:51, warden_seal:268, warm_tincture:88, worn_blade:2, worn_boots:47 };
+  const ICON_INDEX = { anchored_greaves:67, ashen_focus:72, barrow_iron:306, barrow_plate:53, barrow_sword:12, chipped_knife:1, cinder_brand:342, clarity_leaf:284, clear_water:142, cloth_hood:49, cracked_focus:71, cracked_husk:192, custodian_token:270, dawn_flake:265, dawn_focus:73, draught_grand:86, draught_greater:85, draught_lesser:84, dull_fang:198, ember_charm:75, ember_grit:141, field_dressing:176, fire_flask:173, frost_flask:174, gloom_residue:184, grave_dust:138, hollow_core:258, iron_cap:50, luck_knot:269, padded_coat:52, pale_sinew:191, quiet_bell:281, rag_wrap:42, resonant_scale:97, rime_edge:340, rime_shard:99, rousing_ash:140, rousing_ember:139, salve_grand:83, salve_greater:82, salve_lesser:81, scale_harness:43, seal_breaker:16, seal_fragment:100, seer_circlet:58, static_jar:175, storm_filament:147, storm_pick:18, swift_boots:57, tattered_wing:183, warded_cloak:51, warden_seal:268, warm_tincture:88, worn_blade:2, worn_boots:47 };
 
   function defineItem(def) {
     const it = Object.assign({ price: 0, stack: economy.stackDefault, desc: "", tags: [] }, def);
@@ -5272,7 +5315,16 @@ AF.battle = (() => {
       const def = AF.content.status(e.id);
       if (!def) continue;
       if (def.damage) { u.hp = Math.max(0, u.hp - def.damage); events.push({ id:e.id, damage:def.damage, hp:u.hp }); }
-      if (def.heal)   { const b = u.hp; u.hp = Math.min(u.hpMax(), u.hp + def.heal); events.push({ id:e.id, heal:u.hp - b, hp:u.hp }); }
+      /*  0.45.0 — regen and mending scale too, or the lingering half of
+          healing keeps the defect the cast half just lost. Scaled from the
+          BEARER's spirit: the caster is long gone by the time this ticks, and
+          a blessing sitting on someone is theirs. Status DAMAGE is still flat
+          and is recorded in todo() — poison landing on a growing HP pool has
+          the same shape of problem, but it also lands on enemies whose pools
+          do not grow, so it is a balance question rather than this one.   */
+      if (def.heal)   { const b = u.hp;
+                        u.hp = Math.min(u.hpMax(), u.hp + AF.damage.heal({ healer: u, power: def.heal }));
+                        events.push({ id:e.id, heal:u.hp - b, hp:u.hp }); }
       e.turns -= 1;
       if (e.turns <= 0) u.statusEffects.splice(u.statusEffects.indexOf(e), 1);
     }
@@ -5399,7 +5451,11 @@ AF.battle = (() => {
       for (const t of chosen) {
         if (ab.heal) {
           const before = t.hp;
-          t.hp = Math.min(t.hpMax(), t.hp + ab.power);
+          /*  0.45.0 — through AF.damage.heal, which is the one home for the
+              arithmetic (AF-R-801). `ab.power` is a coefficient against the
+              HEALER's spirit, not an amount: the actor casting is who the
+              heal scales from, never the target.                          */
+          t.hp = Math.min(t.hpMax(), t.hp + AF.damage.heal({ healer: actor, power: ab.power }));
           /*  0.30.0 — healing does not go through strike(), so it emitted
               nothing a presentation layer could hear. This is a PRESENTATION
               event carrying the amount actually restored (after the hpMax
@@ -5781,6 +5837,11 @@ AF.battle = (() => {
       "forest_route and barrow_downs have no NPCs at all",
       "GROWTH rates and LEARNSET levels are first drafts, never played to a high level",
       "no AI_PATTERNS or PHASES numbers have been played against a real party — weights and thresholds are first drafts",
+      "0.45.0 balance is SIMULATED, not played: the Custodian's curve (5% at level 4, 35% at 5, 75% at 6, 95% at 8) is 20 fights per level through the real AF.battle with a scripted policy. A scripted policy is not a person, and nobody has fought him with a thumb",
+      "status DAMAGE is still flat while status HEALING now scales (0.45.0). Poison landing on a party HP pool that grows every level fades to nothing, which is the same defect healing just lost — but the same numbers also land on enemies whose pools do NOT grow, so fixing it is an enemy-balance pass rather than a one-line change",
+      "the Hollow Dragon is still authored at the pre-0.45.0 boss scale (288 HP against the Custodian's 450). It is unreachable — no scene starts it — and needs the same simulated pass the Custodian got before it becomes reachable",
+      "14 materials drop and can only be SOLD: no crafting system exists, and none is planned here. Drops-as-currency is a real design, but the names imply recipes that do not exist. Either a crafting pass or a rename is a user decision (AF-R-1007)",
+      "barrow_key and guild_writ were REMOVED at 0.45.0 rather than wired: both were unreachable and unrequired, and giving either a job means inventing a gate. If the barrow should need a key, or the guild a writ, that is canon and is the user's call",
       "defeat policy (revive at 1 HP at the Hold's gate) is a mechanical safety net applied to authored fights too; what defeat MEANS is undecided canon",
       "the forest_route encounter table has never been PLAYED. Simulated at 0.9.2: a competent solo level-1 player completes a 40-tile traverse 65% of the time, and a pair of dust_crawlers is still unwinnable solo. A softened table was tried and reverted — it measured identically. Every number here is a model of a player, not a player"
     ];
@@ -7183,8 +7244,19 @@ AF.content = (() => {
 
     // — key: never merchandise —
     { id:"seal_fragment",  kind:"key", price:0, stack:9 },
-    { id:"barrow_key",     kind:"key", price:0, stack:1 },
-    { id:"guild_writ",     kind:"key", price:0, stack:1 },
+    /*  0.45.0 — `barrow_key` and `guild_writ` were REMOVED here. Both were
+        declared, named and iconed, and nothing granted either and nothing
+        required either: they could not enter a bag by any route and no door,
+        shop or conversation asked for them.
+
+        Removed rather than wired, because wiring them means inventing
+        progression the game does not have. The barrow already has a gate and
+        it is opened by clearing `barrow_gate_ambush`, so a key would be a
+        second answer to a question already answered (AF-R-801); and the
+        guild hall is open to anyone, so a writ would be a new gate on a room
+        the demo wants the player inside. Either is a canon decision and
+        therefore the user's (AF-R-1007) — recorded in the 0.45.0 report as a
+        design question rather than taken here.                            */
     { id:"custodian_token",kind:"key", price:0, stack:1 }
   ];
 
@@ -7203,8 +7275,8 @@ AF.content = (() => {
     { id:"bleed",   turns:4, damage:10, element:"physical"  },
     { id:"chill",   turns:3, damage:6,  element:"ice"       },
     { id:"shock",   turns:2, damage:14, element:"lightning" },
-    { id:"regen",   turns:4, heal:22,   element:"radiant"   },
-    { id:"mending", turns:6, heal:38,   element:"radiant"   },
+    { id:"regen",   turns:4, heal:10,   element:"radiant"   },
+    { id:"mending", turns:6, heal:16,   element:"radiant"   },
     { id:"silence", turns:3, blocks:["skill"]               },
     { id:"blind",   turns:3, missChance:0.45                },
     { id:"rooted",  turns:2, blocks:["flee"]                },
@@ -7249,11 +7321,21 @@ AF.content = (() => {
     // radiant — offence and restoration
     { id:"dawn_mote",   cost:4,  target:"one_enemy",   power:18, kind:"magical", element:"radiant" },
     { id:"sunburst",    cost:12, target:"all_enemies", power:30, kind:"magical", element:"radiant" },
-    { id:"mend",        cost:4,  target:"one_ally",    power:45, heal:true, element:"radiant" },
-    { id:"mend_all",    cost:11, target:"all_allies",  power:38, heal:true, element:"radiant" },
-    { id:"steady",      cost:2,  target:"self",        power:24, heal:true, element:"radiant" },
-    { id:"renewal",     cost:8,  target:"one_ally",    power:20, heal:true, element:"radiant", status:{ id:"regen",   turns:4, chance:1.0 } },
-    { id:"long_mending",cost:15, target:"all_allies",  power:24, heal:true, element:"radiant", status:{ id:"mending", turns:6, chance:1.0 } }
+    /*  0.45.0 — `power` is a COEFFICIENT against the healer's spirit now,
+        not an amount (AF.damage.heal explains why). Retuned in the same
+        edit as the formula, because 45 under the new arithmetic is a heal
+        that outgrows the bar instead of tracking it. `kind` is stated
+        rather than left to default: the registration default is
+        "physical", which made every heal in the audit read as a physical
+        ability one function away from `kind === "magical" ? mat : atk`. */
+    { id:"mend",        cost:4,  target:"one_ally",    power:30, kind:"magical", heal:true, element:"radiant" },
+    { id:"mend_all",    cost:11, target:"all_allies",  power:22, kind:"magical", heal:true, element:"radiant" },
+    /*  40, and larger than mend's 30 on purpose: Aren is a fighter with a
+        quarter of Cass's spirit, so the same share of a health bar costs a
+        bigger coefficient. The formula is doing the work, not this number. */
+    { id:"steady",      cost:2,  target:"self",        power:40, kind:"magical", heal:true, element:"radiant" },
+    { id:"renewal",     cost:8,  target:"one_ally",    power:20, kind:"magical", heal:true, element:"radiant", status:{ id:"regen",   turns:4, chance:1.0 } },
+    { id:"long_mending",cost:15, target:"all_allies",  power:18, kind:"magical", heal:true, element:"radiant", status:{ id:"mending", turns:6, chance:1.0 } }
   ];
 
   /* ── Enemies ────────────────────────────────────────────────────────────
@@ -7353,7 +7435,42 @@ AF.content = (() => {
       [{ id:"dawn_flake", chance:0.65 }, { id:"tattered_wing", chance:0.45 }]),
 
     // — tier 4: authored only. In no random table. —
-    E("seal_custodian",4,"boss",15,400,300, S(30,26,28,24,13,6,30,22),
+    /*  0.45.0 — REBALANCED, and the numbers are simulated through the real
+         AF.battle with a competent party policy, 20 fights per level.
+
+         At vit 30 (230 HP) and atk 30 the demo's only boss was a
+         formality the moment the party could survive one round:
+
+           level        4     5     6     8    10    12
+           win        50%   88%   81%  100%  100%  100%
+           rounds      7r    6r    6r    4r    3r    3r
+
+         Four rounds is not a boss, and the 50% phase below barely got to
+         fire before the fight was over. vit 65 (370 HP) and atk 27:
+
+           level        4     5     6     7     8    10    12
+           win        13%   37%   77%   80%   90%   97%  100%
+           rounds      9r   10r    9r    7r    7r    5r    4r
+
+         (30 fights per level, final numbers.) A long shot at 4, a real
+         fight at 5 and 6, comfortable at 8, and lasting
+         long enough that the 50% phase below is part of the fight rather
+         than a footnote. ATK came DOWN because the length had to come from
+         health rather than from burst: at atk 30 the low-level runs were
+         losses decided in two turns, which reads as a wall rather than as a
+         hard fight.
+
+         MEASURED AGAINST 0.45.0's SKILL POINT RATE, not the old one. The
+         first pass of this tuning landed on 370 HP against one point per
+         level; at two the same party wins 65% at level 5 and 100% at level 8
+         in five rounds, so the number was re-derived rather than kept. Two
+         balance changes in one version have to be measured together or each
+         is measured against a game that no longer exists.
+
+         The Hollow Dragon is untouched and is still authored at the old
+         scale. It is unreachable in this build; when a scene starts it,
+         it needs this same pass (todo()).                              */
+     E("seal_custodian",4,"boss",15,400,300, S(27,26,28,24,13,6,85,22),
       { physical:0.30, fire:0.25, ice:0.25, shadow:0.40, radiant:-0.30 },
       ["sunder","gloom_lance","conflagration","deep_winter","terrify"],
       [{ id:"seal_fragment", chance:1.0 }, { id:"custodian_token", chance:1.0 }, { id:"resonant_scale", chance:1.0 }]),
@@ -7581,8 +7698,21 @@ AF.content = (() => {
     hold_supplies: { scene:"shop_interior", stock:[
       "salve_lesser","draught_lesser","clear_water","warm_tincture",
       "chipped_knife","rag_wrap","worn_boots","cloth_hood"] },
+    /*  0.45.0 — the GRAND tier joins the guild's list. `salve_grand`,
+        `draught_grand` and `rousing_ember` were declared, priced, iconed,
+        named and fully working, and no shop sold them and no enemy dropped
+        them: the top of all three consumable ladders was unreachable while
+        every rung below it was on sale. They are the items a player would
+        want for the boss, which is the one fight that makes them worth 280
+        to 520 gold.
+
+        Priced-gated rather than flag-gated, deliberately. At roughly 30 gold
+        a barrow fight a Grand Salve is nine or ten fights of saving, so it
+        stays a decision rather than becoming standard kit — no new mechanic
+        needed to make it one.                                             */
     guild_quartermaster: { scene:"guild_hall_interior", stock:[
-      "salve_greater","draught_greater","field_dressing","clarity_leaf","rousing_ash",
+      "salve_greater","salve_grand","draught_greater","draught_grand",
+      "field_dressing","clarity_leaf","rousing_ash","rousing_ember",
       "worn_blade","padded_coat","iron_cap","swift_boots","luck_knot",
       "fire_flask","frost_flask","static_jar"] },
 
@@ -8352,7 +8482,7 @@ AF.content = (() => {
     cloth_hood:"Cloth Hood", iron_cap:"Iron Cap", seer_circlet:"Seer's Circlet",
     worn_boots:"Worn Boots", swift_boots:"Swift Boots", anchored_greaves:"Anchored Greaves",
     luck_knot:"Luck Knot", ember_charm:"Ember Charm", quiet_bell:"Quiet Bell",
-    seal_fragment:"Seal Fragment", barrow_key:"Barrow Key", guild_writ:"Guild Writ",
+    seal_fragment:"Seal Fragment",
     custodian_token:"Custodian's Token",
     poison:"Poison", blight:"Blight", burn:"Burning", bleed:"Bleeding", chill:"Chilled",
     shock:"Shocked", regen:"Regen", mending:"Mending", silence:"Silence",
@@ -10216,23 +10346,41 @@ AF.selftest = (() => {
       return bad.length === 0 || bad.join("; ");
     });
 
-    t("a board is bought out at exactly level 20, not before and not after", () => {
+    t("every board completes at the same level, and inside the demo's reach", () => {
+      /*  0.45.0 — was "bought out at exactly level 20", which asserted the
+          literal 20 and the literal one-point-per-level. Both were true and
+          both were the defect: 19 points at one per level is level 20, which
+          needs 21,712 exp — roughly 513 barrow fights, in a demo that ends at
+          the Custodian around level 5 to 8. The rule under test is what
+          matters, so it reads the rate rather than restating it, and adds the
+          bound that was missing: a board must complete somewhere a player can
+          actually get to.                                                  */
       const bad = [];
+      const rate = AF.ascension.SP_PER_LEVEL;
+      if (!(rate >= 1)) bad.push(`SP_PER_LEVEL is ${rate}`);
+      const completions = new Set();
       for (const [role, nodes] of Object.entries(AF.content.BOARDS)) {
         const total = nodes.reduce((n, m) => n + m.cost, 0);
-        //  One point per level GAINED: level 1 is zero, level L is L-1.
-        const completesAt = total + 1;
-        if (completesAt !== 20)
-          bad.push(`${role}: ${total} points completes at level ${completesAt}`);
+        //  Level 1 grants nothing; level L has (L-1) * rate points.
+        const completesAt = Math.ceil(total / rate) + 1;
+        completions.add(completesAt);
+        if (completesAt > 14)
+          bad.push(`${role}: ${total} points completes at level ${completesAt}, past the demo's reach`);
+        if (completesAt < 6)
+          bad.push(`${role}: completes at level ${completesAt} — the board is spent before the boss`);
       }
-      //  And the grant itself is one per level, which is what makes the sums
-      //  above mean anything.
+      /*  All four the same, or one role finishes its identity early and the
+          others are still buying theirs.                                   */
+      if (completions.size !== 1)
+        bad.push(`boards complete at different levels: ${[...completions].sort((a,b)=>a-b).join(", ")}`);
+
+      //  And the grant honours the rate, which is what makes the sums mean anything.
       const u = AF.actors.create({ id:"t_grant_probe", name:"probe", role:"balanced",
         level:1, base:AF.content.ROSTER[0].base, abilities:["gut_punch"] });
-      AF.ascension.grantForLevel(u, 19);
+      AF.ascension.grantForLevel(u, 10);
       const got = u.sp;
       AF.actors.forget("t_grant_probe");
-      if (got !== 19) bad.push(`nineteen levels granted ${got} points, not 19`);
+      if (got !== 10 * rate) bad.push(`ten levels granted ${got} points, not ${10 * rate}`);
       return bad.length === 0 || bad.join("; ");
     });
 
@@ -11286,11 +11434,12 @@ AF.selftest = (() => {
       return true;
     });
 
-    t("levelling up grants exactly one skill point per level", () => {
+    t("levelling up grants skill points at the declared rate", () => {
       const u = AF.actors.create({ id:"t_asc5", name:"Asc5", role:"balanced", level:1 });
       u.sp = 0;
       AF.ascension.grantForLevel(u, 3);
-      return u.sp === 3 || `sp is ${u.sp} after three levels`;
+      const want = 3 * AF.ascension.SP_PER_LEVEL;
+      return u.sp === want || `sp is ${u.sp} after three levels; the rate says ${want}`;
     });
 
     t("the board opens, spends and backs out through the real input path", () => {
@@ -12417,6 +12566,99 @@ AF.selftest = (() => {
         if (!AF.scene.has(sceneId)) bad.push(`${sceneId} is not a registered scene`);
         if (!AF.audio.ids().includes(trackId)) bad.push(`${sceneId} names missing track "${trackId}"`);
       }
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("every declared item can be obtained by some route", () => {
+      /*  0.45.0 — the audit's finding, made permanent. Five items were
+          declared, priced, named, iconed and fully working, and could not
+          enter a bag by ANY route: `salve_grand`, `draught_grand` and
+          `rousing_ember` — the top rung of all three consumable ladders,
+          while every rung below them was on sale — plus two key items that
+          nothing granted and nothing required.
+
+          This is the same shape as the audio test at 0.43.0 and the enemy
+          test before it: a complete asset nobody can reach still ships, is
+          still paid for in bytes, and reads to a player as content that
+          isn't there. Three routes exist and the rule is that an item must
+          use one of them.                                                 */
+      const bad = [];
+      const shops = new Set();
+      for (const s of Object.values(AF.content.SHOPS || {}))
+        for (const e of (s.stock || s.items || [])) shops.add(e.id || e);
+      const drops = new Set();
+      for (const e of AF.battle.ENEMIES.values())
+        for (const d of (e.drops || [])) drops.add(d.id || d);
+      const start = new Set();
+      for (const r of (AF.content.ROSTER || []))
+        for (const v of Object.values(r.startEquipment || {})) start.add(v);
+
+      for (const it of AF.registry.all("item")) {
+        if (shops.has(it.id) || drops.has(it.id) || start.has(it.id)) continue;
+        bad.push(`${it.id} (${it.kind}, ${it.price}g) is sold by nobody, dropped by nothing and starts on no one`);
+      }
+      /*  And the reverse, so a shop cannot stock a name that is not an item —
+          the 0.43.0 audio lesson pointed the other way.                    */
+      for (const id of shops)
+        if (!AF.data.item(id)) bad.push(`a shop stocks "${id}", which is not an item`);
+      for (const id of drops)
+        if (!AF.data.item(id)) bad.push(`an enemy drops "${id}", which is not an item`);
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("healing keeps its share of the health bar as the party levels", () => {
+      /*  0.45.0, and the test this build should have had since healing
+          existed. 396 tests passed on a build where `mend` restored a flat 45
+          forever — 83% of the survivor's bar at level 1 and 13% at level 30 —
+          because nothing anywhere asserted what a heal was WORTH. Retuning
+          the number would not have failed a single check either.
+
+          The property is a RATIO, not an amount, so it survives every future
+          retune of `power`, of the HP curve, and of the growth rates. That is
+          the whole point: the defect was that one of those three moved and
+          healing did not move with it.                                    */
+      const bad = [];
+      const mend = AF.battle.ABILITIES.get("mend");
+      if (!mend || !mend.heal) return "mend is not a healing ability";
+
+      /*  A synthetic actor, never a party member: the suite must leave the
+          player's game exactly as it found it, and this walks a level curve. */
+      const probe = AF.actors.create({ id: "heal_probe_a", name: "Probe", role: "support",
+                                       level: 1, base: AF.content.roster("mender_04").base });
+      const ratios = [];
+      for (const L of [1, 5, 10, 20, 30]) {
+        probe.level = L;
+        const share = AF.damage.heal({ healer: probe, power: mend.power }) / probe.hpMax();
+        ratios.push({ L, pct: Math.round(share * 100) });
+      }
+      const lo = Math.min(...ratios.map(r => r.pct)), hi = Math.max(...ratios.map(r => r.pct));
+      /*  A 15-point band across thirty levels. The pre-fix build spanned 70
+          points, so this cannot pass by accident; a flat heal fails it at
+          level 5.                                                          */
+      if (hi - lo > 15)
+        bad.push(`mend swings from ${lo}% to ${hi}% of the bar across levels ${ratios.map(r=>r.L).join("/")}`);
+      if (lo < 20) bad.push(`mend falls to ${lo}% of the bar — a heal that cannot outpace one enemy turn`);
+      if (hi > 90) bad.push(`mend reaches ${hi}% of the bar — a full heal for 4 MP`);
+
+      /*  Scaling from the HEALER, never the target: two characters with
+          different spirit must not heal the same amount.                  */
+      const weak = AF.actors.create({ id: "heal_probe_b", name: "Probe2", role: "balanced",
+                                      level: 10, base: AF.content.roster("survivor_01").base });
+      probe.level = 10;
+      if (AF.damage.heal({ healer: probe, power: 30 }) <= AF.damage.heal({ healer: weak, power: 30 }))
+        bad.push("a support healer restores no more than a fighter — the heal is not reading spirit");
+
+      //  Lingering healing scales too, or half the defect survives.
+      const regen = AF.content.status("regen");
+      if (regen && regen.heal) {
+        probe.level = 1;  const one = AF.damage.heal({ healer: probe, power: regen.heal });
+        probe.level = 20; const twenty = AF.damage.heal({ healer: probe, power: regen.heal });
+        if (twenty <= one) bad.push("regen ticks the same at level 20 as at level 1");
+      }
+      //  And the source-level claim: nothing may add `power` to hp directly.
+      const code = AF.selftest.codeOf(AF.battle.command);
+      if (/hp\s*\+\s*ab\.power/.test(code))
+        bad.push("a heal path still adds ability power to hp without scaling it");
       return bad.length === 0 || bad.join("; ");
     });
 
@@ -14083,7 +14325,10 @@ AF.selftest = (() => {
       AF.state.party = savedParty; AF.state.player.actorId = savedLink;
       AF.actors.forgetPrefix("t_lvl_");
       if (got.level < 4) return `did not reach level 4 (level ${got.level})`;
-      if (got.sp !== got.level - 3) return `levelling to ${got.level} paid ${got.sp} points`;
+      /*  Started at level 3, so (level - 3) levels were gained. Reads the
+          declared rate rather than assuming one, since 0.45.0 pays two.   */
+      const owed = (got.level - 3) * AF.ascension.SP_PER_LEVEL;
+      if (got.sp !== owed) return `levelling to ${got.level} paid ${got.sp} points, not ${owed}`;
       if (got.kit.join(",") !== "gut_punch") return `levelling changed the kit to ${got.kit}`;
       if (got.learned.length) return `a battle:learned event fired for ${got.learned}`;
       return (got.levelled || []).some(l => l.sp > 0)
@@ -21391,11 +21636,27 @@ AF.ascension = (() => {
     return { ok:true, node: node.id, spLeft: actor.sp };
   }
 
-  /*  One point per level gained. Awarded where levels are, so a level gained
-      by any route grants it. */
+  /*  Awarded where levels are, so a level gained by any route grants it.
+
+      0.45.0 — TWO per level, from one. A full board is 19 points, and at one
+      per level that is level 20, which needs 21,712 cumulative exp — about
+      513 barrow fights. The demo ends at the Custodian, where a player
+      arrives around level 5 to 8 holding 4 to 7 points: they saw a third of
+      one board and none of the abilities behind it.
+
+      At two per level, level 8 is 14 points of 19 — most of a board, with the
+      last tier still to earn. The boards keep their job (you cannot have
+      everything, and the order you buy in is still a choice); they stop being
+      a system the demo only shows the entrance to.
+
+      FLEXIBLE (AF-R-802). This is the cheapest of the three levers — the
+      others were making the boards shorter, which throws away authored
+      content, and making levels faster, which changes every encounter's
+      pacing to fix a progression problem.                                 */
+  const SP_PER_LEVEL = 2;
   function grantForLevel(actor, levels = 1) {
     if (!actor) return 0;
-    actor.sp = (actor.sp || 0) + levels;
+    actor.sp = (actor.sp || 0) + levels * SP_PER_LEVEL;
     return actor.sp;
   }
 
@@ -21410,7 +21671,7 @@ AF.ascension = (() => {
     return out;
   }
 
-  return { boardOf, nodeOf, has, available, unlock, statBonus, grantForLevel,
+  return { boardOf, nodeOf, has, available, unlock, statBonus, grantForLevel, SP_PER_LEVEL,
            problems, spent: (a) => held(a).reduce((t, id) => t + (nodeOf(a, id)?.cost || 0), 0) };
 })();
 
