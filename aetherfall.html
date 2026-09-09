@@ -311,7 +311,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.46.0",
+  version:   "0.47.0",
   builtOn:   "2026-09-08",
   saveSchema: 5,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -12652,6 +12652,76 @@ AF.selftest = (() => {
       return bad.length === 0 || bad.join("; ");
     });
 
+    t("a spoken line stays inside its bubble, through the scene's own draw", () => {
+      /*  0.47.0. Reported from a phone: Wren's line ran outside its box — the
+          first row on the top border, the last row below the frame entirely.
+
+          There was already a test for this. It called `AF.speech.draw`, which
+          is correct and which NO SCENE CALLED: Rowan's Hold carried a second
+          implementation of the same bubble and that is the one the player saw.
+          A test can only defend the code that runs, so this one drives the
+          SCENE's draw and measures what actually reaches the canvas.
+
+          It asserts the property, not the arithmetic: every text baseline
+          lands inside the panel's INTERIOR — past `ui_panel_slate`'s corners,
+          which are 16 * UI_SCALE at top and bottom and are what made a
+          124-pixel box hold 28 pixels of usable room.                      */
+      const bad = [];
+      const sc = AF.scene.active();
+      if (!sc || typeof sc.draw !== "function") return "no active scene to draw";
+      const keep = AF.speech.current();
+      /*  The STAGE context, not a scratch one: `sc.draw()` takes no argument
+          and renders to the real canvas, so a spy on anything else records
+          nothing. That is the same mistake in miniature as the bug — testing
+          a path the game does not take.                                    */
+      const ctx = document.getElementById("stage").getContext("2d");
+      const realNine = AF.render.nineSlice, realFill = ctx.fillText.bind(ctx);
+      const panels = [], texts = [];
+      try {
+        AF.render.nineSlice = function (id, x, y, w, h) {
+          if (id === "ui_panel_slate") panels.push({ x, y, w, h });
+          return realNine.apply(this, arguments);
+        };
+        ctx.fillText = function (s, x, y) { texts.push({ s: String(s), x, y }); return realFill(s, x, y); };
+        /*  Long enough to wrap to three rows at the bubble's width, which is
+            the case that broke: one and two rows fit the old box by luck.  */
+        AF.speech.say("Wren", "Rowan's Hold has survived winters, raiders, and bad kings. " +
+                              "Whatever this is… it feels different.");
+        if (AF.speech.finish) AF.speech.finish();
+        sc.draw();
+      } catch (e) { bad.push(`the scene draw threw: ${e.message}`); }
+      finally {
+        AF.render.nineSlice = realNine;
+        ctx.fillText = realFill;
+        AF.speech.clear();
+        if (keep) AF.speech.say(keep.who, keep.text);
+      }
+
+      if (!panels.length) { bad.push("no bubble panel was drawn for a live line"); }
+      else {
+        //  The bubble is the LAST slate panel drawn — the prompt, if any, is first.
+        const p = panels[panels.length - 1];
+        const FRAME = 16 * AF.const.UI_SCALE;
+        const rows = texts.filter(t => t.s.length > 6 && t.y > p.y && t.y < p.y + p.h + 120);
+        if (rows.length < 3)
+          bad.push(`only ${rows.length} row(s) of a three-row line reached the canvas`);
+        for (const r of rows) {
+          if (r.y < p.y + FRAME)
+            bad.push(`a row is drawn at ${Math.round(r.y)}, inside the panel's top frame (${Math.round(p.y + FRAME)})`);
+          if (r.y > p.y + p.h - FRAME / 2)
+            bad.push(`a row is drawn at ${Math.round(r.y)}, past the panel's bottom (${Math.round(p.y + p.h)})`);
+        }
+        if (p.h < 108) bad.push(`the bubble is ${Math.round(p.h)}px — under the 108 its frame needs`);
+      }
+      /*  And the reason it broke: one box, one implementation (AF-R-801). A
+          scene may CHOOSE when to draw the bubble; it may not draw a second
+          one of its own.                                                    */
+      const code = AF.selftest.codeOf(sc.draw) || "";
+      if (/nineSlice\(\s*["']ui_panel_slate["'][\s\S]{0,400}measureText/.test(code))
+        bad.push("the scene measures and draws its own speech bubble again");
+      return bad.length === 0 || bad.slice(0, 4).join("; ");
+    });
+
     t("each mode shows exactly the controls it reads", () => {
       /*  0.46.0 — the general form of two separate bugs.
 
@@ -17831,38 +17901,32 @@ AF.demo = (() => {
       ctx.fillText("A — accept     B — leave it", pad + 18, by + bh - 10);
       ctx.restore();
     } else if (AF.speech.current()) {
-      /*  0.26.0 — wrapped, and sized to what it holds. The box was 72px tall
-          with one fillText in it, which was fine while every villager line
-          fit on one row; the 0.23.0 cast speaks whole sentences, and those
-          ran off the right edge of a box that did not grow. The line is
-          measured into rows first (dry run), then the panel is drawn to fit
-          them, then the rows are drawn — so the panel is never taller or
-          shorter than its text.                                            */
-      const V = AF.const.VIEW, pad = 10;
-      const bw = V.W - pad * 2, textW = bw - 36, lh = 24;
-      const says = AF.speech.current();
-      ctx.save();
-      //  0.31.0 — 17px and clear of the buttons, matching AF.speech.
-      ctx.font = "17px ui-monospace, Menlo, monospace";
-      ctx.textAlign = "left";
-      const rows = [];
-      { let line = "";
-        for (const w of String(says.text).split(" ")) {
-          const test = line ? line + " " + w : w;
-          if (ctx.measureText(test).width > textW && line) { rows.push(line); line = w; }
-          else line = test;
-        }
-        if (line) rows.push(line); }
-      const bh = (says.who ? 34 : 16) + rows.length * lh + 18;
-      const by = Math.max(8, AF.controls.top - bh - 8);
-      ctx.globalAlpha = 0.94;
-      AF.render.nineSlice("ui_panel_slate", pad, by, bw, bh);
-      ctx.globalAlpha = 1;
-      let ty = by + 30;
-      if (says.who) { ctx.fillStyle = "#e0be7c"; ctx.fillText(says.who, pad + 18, ty); ty += 28; }
-      ctx.fillStyle = "#e8e4d8";
-      for (const r of rows) { ctx.fillText(r, pad + 18, ty); ty += lh; }
-      ctx.restore();
+      /*  0.47.0 — AF.speech DRAWS ITSELF. This was a second, independent
+          renderer for the same bubble, and it is the one the player saw.
+
+          Reported from a phone: Wren's line ran outside its box — the first
+          row sat on the top border and the last row was drawn below the frame
+          entirely. The arithmetic here is why. `bh` was
+          `34 + rows * 24 + 18`, which is 124px for three rows, and
+          `ui_panel_slate`'s corners are 16 * UI_SCALE = 48px at top AND
+          bottom. Ninety-six of those 124 pixels are frame; twenty-eight are
+          interior; three rows need seventy-two. Text started at `by + 30`,
+          which is inside the top border before a word is drawn.
+
+          AF.speech had already solved this. Its box is
+          `max(108, 62 + lines * 24 + 20)` — 154px for the same three rows —
+          and its text starts at `by + 62`, past the border. Its header still
+          carries the 0.9.2 note explaining the clamped corners, the fix, and
+          why the minimum is 108.
+
+          So the bug is not arithmetic. It is that ONE BOX HAD TWO
+          IMPLEMENTATIONS (AF-R-801), the good one was never called, and the
+          self-test that covers it exercised `AF.speech.draw` — the copy no
+          player ever saw. A test can only defend the code that runs.
+
+          Deleting the copy also gains what it never had: the name plate art,
+          the fade, and the rise on arrival.                                */
+      AF.speech.draw(ctx);
     }
 
     if (AF.debug && AF.debug.boxes) {
