@@ -194,6 +194,25 @@ MODULE MAP — search for the banner to jump
       and the battle screen lifts its furniture above whatever the pad
       actually covers, which it now MEASURES instead of assuming.         */
   body.battle .pad .l,body.battle .pad .r{display:none}
+  /*  0.46.0 — the party/board screen reads axis().y and nothing else, exactly
+      like the battle menu, so it hides the same two buttons for the same
+      reason. Found by auditing what each mode SHOWS against what it READS,
+      rather than by looking at the screen that had just been fixed.       */
+  body.menu .pad .l,body.menu .pad .r{display:none}
+  /*  0.46.0 — ☰ IS HIDDEN IN A FIGHT.
+
+      It stayed visible, and tapping it laid the whole pause menu over the
+      battle: PARTY, ITEMS, EQUIPMENT, SAVE, REST, RETURN TO ROWAN'S HOLD,
+      NEW GAME. Nothing there was exploitable — B closes the overlay, the warp
+      is refused and the fight survives — but the refusals were SILENT. No row
+      was marked disabled and nothing said why, so a player tapped and the
+      game appeared to ignore them.
+
+      Hidden rather than disabled row-by-row, because a fight already has its
+      own menu and every row worth pressing mid-fight (Item, Skill) is in it.
+      This is the rule the line above it has followed since 0.14.3 — a control
+      is shown only where it does something.                               */
+  body.battle #menuBtn{display:none}
   /*  0.15.0 — the target labels A and B. They are DOM buttons, so the labels
       are DOM too rather than canvas text guessing at where the buttons are.  */
   body.title #actions{flex-direction:row;gap:14px}
@@ -292,9 +311,9 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.45.0",
+  version:   "0.46.0",
   builtOn:   "2026-09-08",
-  saveSchema: 4,
+  saveSchema: 5,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
 });
 
@@ -4042,6 +4061,45 @@ AF.save = (() => {
       for (const p of data.party || []) { p.nodes = p.nodes || []; p.sp = p.sp || 0; }
       data.schema = 4;
       return data;
+    },
+
+    /*  4 → 5. GHOST ITEMS. 0.45.0 removed `barrow_key` and `guild_writ` — both
+        declared, named and iconed, and neither granted nor required by
+        anything. A save written before that still holds them, and the audit
+        found what happened next: the game did not crash, `AF.data.item()`
+        returned null, and the bag drew them forever as
+        «missing text: placeholder.name.barrow_key». An honest failure, and a
+        permanent one.
+
+        This drops inventory entries the BUILD no longer declares, so it is not
+        a list of two ids that goes stale the next time an item is retired: it
+        asks the registry. Equipment worn on a party member is checked the same
+        way, since a removed item could be in a slot rather than the bag.
+
+        Deliberately NOT a refusal. A save is a player's time and a retired
+        trinket is not worth refusing one over (AF-R-932's spirit): the entry
+        is dropped, the drop is reported through AF.diag so it is visible in
+        the panel rather than silent, and everything else loads.           */
+    4: (data) => {
+      const declared = (id) => { try { return !!AF.data.item(id); } catch (_) { return false; } };
+      const dropped = [];
+      data.inventory = (data.inventory || []).filter(e => {
+        const id = e && (e.id !== undefined ? e.id : e);
+        if (declared(id)) return true;
+        dropped.push(id);
+        return false;
+      });
+      for (const p of data.party || []) {
+        if (!p.equipment) continue;
+        for (const slot of Object.keys(p.equipment)) {
+          const id = p.equipment[slot];
+          if (id && !declared(id)) { dropped.push(`${p.id || "?"}:${slot}=${id}`); p.equipment[slot] = null; }
+        }
+      }
+      if (dropped.length)
+        AF.diag.note(`save migration 4→5 dropped ${dropped.length} item(s) this build no longer declares: ${dropped.join(", ")}`);
+      data.schema = 5;
+      return data;
     }
   };
 
@@ -5837,6 +5895,8 @@ AF.battle = (() => {
       "forest_route and barrow_downs have no NPCs at all",
       "GROWTH rates and LEARNSET levels are first drafts, never played to a high level",
       "no AI_PATTERNS or PHASES numbers have been played against a real party — weights and thresholds are first drafts",
+      "the chest system is declared and EMPTY: the save schema carries a `chests` field and its state object exists, and zero chests are placed in any scene. Nothing is broken — it is a persisted system with no content, the same shape as the two mapless regions",
+      "docs/RULES_INDEX.md has never existed. 89 rules are cited across 839 citations and only 16 are machine-enforced; the other 73 are cited in reasoning, where nothing fails if the code drifts from the Bible. docs/RULES_CITED_0_46_0.md is a DERIVED census (tools/rules-census.py) and is not that index — it makes the gap measurable, not closed",
       "0.45.0 balance is SIMULATED, not played: the Custodian's curve (5% at level 4, 35% at 5, 75% at 6, 95% at 8) is 20 fights per level through the real AF.battle with a scripted policy. A scripted policy is not a person, and nobody has fought him with a thumb",
       "status DAMAGE is still flat while status HEALING now scales (0.45.0). Poison landing on a party HP pool that grows every level fades to nothing, which is the same defect healing just lost — but the same numbers also land on enemies whose pools do NOT grow, so fixing it is an enemy-balance pass rather than a one-line change",
       "the Hollow Dragon is still authored at the pre-0.45.0 boss scale (288 HP against the Custodian's 450). It is unreachable — no scene starts it — and needs the same simulated pass the Custodian got before it becomes reachable",
@@ -7643,8 +7703,24 @@ AF.content = (() => {
         the grade only has to say "dusk over grey rock" — at 0.65 the new
         surface, its gravel trail and every bone on it were invisible.     */
     barrow_downs: { safe:false, encounterRate:0.08, scenes:["barrow_downs"], grade:{ tint:"#141018", night:0.34 }, music:null },
-    deep_barrow:  { safe:false, encounterRate:0.11, scenes:[], grade:{ tint:"#0a0a10", night:0.85 }, music:null },
-    ashen_reach:  { safe:false, encounterRate:0.09, scenes:[], grade:{ tint:"#1a1210", night:0.50 }, music:null }
+    /*  0.46.0 — `planned:true` DECLARES that these two have no map yet.
+
+        Both carry a full encounter table — nine weighted rows between them,
+        naming eleven enemies, three of which (`pale_choir`, `iron_shade`,
+        `dawn_moth`) exist nowhere else and so cannot be met by any route.
+        None of that is a bug: it is authored content waiting on two maps.
+
+        What WAS a bug is that nothing said so. A region whose `scenes` list
+        is empty looked identical to a region whose map had been deleted by
+        accident, and the suite could not tell them apart. This flag is the
+        difference, and the self-test reads it: an empty region without it
+        fails, an empty region with it is a promise on the record.
+
+        Remove the flag the day either gets a map. Nothing else has to move —
+        the tables, the grades and the encounter rates are already authored
+        against it.                                                        */
+    deep_barrow:  { safe:false, encounterRate:0.11, scenes:[], planned:true, grade:{ tint:"#0a0a10", night:0.85 }, music:null },
+    ashen_reach:  { safe:false, encounterRate:0.09, scenes:[], planned:true, grade:{ tint:"#1a1210", night:0.50 }, music:null }
   };
 
   /* ── Party roster ───────────────────────────────────────────────────────
@@ -7759,11 +7835,18 @@ AF.content = (() => {
      enemy "heal a turn late" when two true conditions sit at different
      list positions.
 
-     Coverage is deliberately partial: two real enemies (cairn_hound,
-     ash_revenant) prove the schema against actual content. The other 16
-     enemies + 2 bosses fall through to AF.battle's existing simple brain
-     until they're each given a real pattern — a per-enemy authoring pass,
-     not a thing to fake in bulk to make a number look bigger (AF-R-1006).  */
+     Coverage WAS deliberately partial — two real enemies (cairn_hound,
+     ash_revenant) proving the schema, and the rest falling through to
+     AF.battle's simple brain. That is no longer the state and this comment
+     said so until 0.46.0, which is its own small lesson: a note describing
+     coverage goes stale the moment coverage changes, and nothing fails when
+     it does.
+
+     Measured at 0.46.0: all 20 enemies carry a pattern. Seventeen have real
+     gambits; three (husk_lesser, dust_crawler, slime) declare only a
+     `default` of "attack", which is not a gap — a tier-one husk that shambles
+     forward is the behaviour, and giving it conditions to fake a number would
+     be the thing AF-R-1006 refuses.                                       */
   const AI_CONDITIONS = [
     "always", "self_hp_below", "self_hp_above", "ally_hp_below",
     "target_hp_below", "self_status_absent", "self_status_present",
@@ -12565,6 +12648,124 @@ AF.selftest = (() => {
       for (const [sceneId, trackId] of Object.entries(AF.audio.TRACK_FOR)) {
         if (!AF.scene.has(sceneId)) bad.push(`${sceneId} is not a registered scene`);
         if (!AF.audio.ids().includes(trackId)) bad.push(`${sceneId} names missing track "${trackId}"`);
+      }
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("each mode shows exactly the controls it reads", () => {
+      /*  0.46.0 — the general form of two separate bugs.
+
+          0.44.0: the whole d-pad was hidden in battle, whose menu is a
+          vertical list, so a touch-only player could press A on one row and
+          nothing else. Fixed by showing up/down.
+          0.46.0: the party and board screen showed the FULL pad while reading
+          only `axis().y`, and ☰ stayed visible in a fight where half the pause
+          menu's rows cannot run.
+
+          Both are the same rule — a control is shown only where it does
+          something — and both survived a fix to the other, because each was
+          fixed as a screen rather than as a rule. This asserts the rule.    */
+      const bad = [];
+      const readsY = (fn) => /axis\(\)\.y|\.axis\(\)\s*;[\s\S]{0,200}\.y/.test(AF.selftest.codeOf(fn) || "");
+      const readsX = (fn) => /axis\(\)\.x|a\.x/.test(AF.selftest.codeOf(fn) || "");
+      const body = document.body, was = body.className;
+      const vis = (sel) => { const el = document.querySelector(sel);
+                             return el ? getComputedStyle(el).display !== "none" : false; };
+      try {
+        //  mode class -> [does it read X, does it read Y, may ☰ open here]
+        const MODES = {
+          battle: { fn: AF.battle.update,       menuBtn: false },
+          menu:   { fn: AF.partyScreen.update,  menuBtn: true  },
+          "":     { fn: null,                   menuBtn: true  }   // overworld
+        };
+        for (const [cls, spec] of Object.entries(MODES)) {
+          body.className = cls;
+          const name = cls || "overworld";
+          const wantsX = spec.fn ? readsX(spec.fn) : true;   // walking needs all four
+          const wantsY = spec.fn ? readsY(spec.fn) : true;
+          if (wantsY && !(vis("#pad .u") && vis("#pad .d")))
+            bad.push(`${name} reads the Y axis and hides up/down`);
+          if (!wantsX && (vis("#pad .l") || vis("#pad .r")))
+            bad.push(`${name} never reads the X axis and still shows left/right`);
+          if (wantsX && !(vis("#pad .l") && vis("#pad .r")))
+            bad.push(`${name} reads the X axis and hides left/right`);
+          if (!spec.menuBtn && vis("#menuBtn"))
+            bad.push(`${name} shows ☰, which opens a menu whose rows cannot run there`);
+          if (spec.menuBtn && !vis("#menuBtn") && cls !== "")
+            bad.push(`${name} hides ☰ and has no other way to reach the menu`);
+        }
+        //  A and B are the only way to confirm or cancel anywhere: never hidden.
+        for (const cls of ["", "battle", "menu", "title"]) {
+          body.className = cls;
+          if (!vis("#btnA") || !vis("#btnB"))
+            bad.push(`${cls || "overworld"} hides A or B — nothing could be confirmed or cancelled`);
+        }
+        /*  And the WIRING, not just the stylesheet. The first version of this
+            test set `body.className` by hand, so it proved the CSS rules were
+            right and would have passed with the line that SETS the class
+            deleted — which is half the bug it exists to catch. Driving the
+            real `mode:changed` listener is the other half. Safe to emit: it
+            is the only listener on that event, and the class is restored in
+            the finally below whatever happens.                            */
+        for (const [mode, cls] of [["boot","title"], ["battle","battle"], ["menu","menu"], ["overworld",null]]) {
+          body.className = "";
+          AF.events.emit("mode:changed", { next: mode });
+          if (cls && !body.classList.contains(cls))
+            bad.push(`entering ${mode} did not put "${cls}" on the body — the stylesheet cannot see the mode`);
+          if (!cls && body.className.trim())
+            bad.push(`entering ${mode} left "${body.className}" on the body`);
+        }
+      } catch (_) { /* no DOM: nothing to assert */ }
+      finally { body.className = was; }
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("a save keeps only items this build still declares", () => {
+      /*  0.46.0 — the 4→5 migration, driven rather than read. 0.45.0 retired
+          two items; a save written before it kept them forever and the bag
+          drew «missing text: …» in their place. The property is not "those two
+          ids are gone" — it is that the migration asks the REGISTRY, so it
+          still works the next time an item is retired.                     */
+      const bad = [];
+      const step = AF.save.MIGRATIONS && AF.save.MIGRATIONS[4];
+      if (!step) return "no 4→5 migration";
+      const real = AF.registry.all("item")[0];
+      const doc = { schema: 4,
+                    inventory: [ { id: real.id, n: 2 }, { id: "no_such_item_probe", n: 1 } ],
+                    party: [ { id: "probe", equipment: { weapon: real.id, head: "another_ghost_probe" } } ] };
+      const out = step(JSON.parse(JSON.stringify(doc)));
+      if (out.schema !== 5) bad.push(`migration left schema at ${out.schema}`);
+      const ids = out.inventory.map(e => e.id);
+      if (ids.includes("no_such_item_probe")) bad.push("an undeclared bag entry survived the migration");
+      if (!ids.includes(real.id)) bad.push(`the migration dropped ${real.id}, which this build declares`);
+      const eq = out.party[0].equipment;
+      if (eq.head === "another_ghost_probe") bad.push("an undeclared WORN item survived the migration");
+      if (eq.weapon !== real.id) bad.push("the migration unequipped a declared item");
+      if (AF.build.saveSchema < 5) bad.push(`build still writes save schema ${AF.build.saveSchema}`);
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("content that cannot be reached is declared, not accidental", () => {
+      /*  0.46.0 — nine authored encounter rows naming eleven enemies sit in
+          two regions with no map, and three of those enemies exist nowhere
+          else. That is content waiting on two maps, which is fine; what was
+          not fine is that nothing said so, and a region whose map had been
+          deleted by ACCIDENT would have looked exactly the same.
+
+          `planned:true` is the difference. This refuses an empty region
+          without it, and — the half that keeps the flag honest — refuses the
+          flag on a region that does have a map, so it cannot be left behind
+          as a lie once one is built.                                       */
+      const bad = [];
+      for (const [id, r] of Object.entries(AF.content.REGIONS || {})) {
+        const live = (r.scenes || []).some(s => AF.scene.has(s));
+        const rows = ((AF.content.ENCOUNTERS || {})[id] || []).length;
+        if (!live && !r.planned)
+          bad.push(`region ${id} has no scene and is not marked planned (${rows} encounter row(s) stranded)`);
+        if (live && r.planned)
+          bad.push(`region ${id} has a map and is still marked planned`);
+        if (!live && r.safe === false && rows === 0)
+          bad.push(`region ${id} has no map, no encounters and nothing planned in it`);
       }
       return bad.length === 0 || bad.join("; ");
     });
@@ -21435,11 +21636,24 @@ AF.title = (() => {
 
   AF.mode.register("boot", { update, draw });
 
+  /*  The body carries the MODE, and the stylesheet decides which of the fixed
+      controls that mode is allowed to show. One class per mode, set here and
+      nowhere else, so a control can never be hidden by one rule and shown by
+      another (AF-R-801).
+
+      0.46.0 — `menu` joined `title` and `battle`. It was missing, so the party
+      and board screen fell through to the default and drew a full d-pad while
+      reading only `AF.input.axis().y`: two of a phone's four direction buttons
+      were dead thumb-space. That is the same defect 0.44.0 fixed for battle,
+      and it survived because that fix was scoped to `body.battle` rather than
+      to the rule underneath it — a control is shown only where it does
+      something.                                                            */
   AF.events.on("mode:changed", (e) => {
     try {
-      document.body.classList.toggle("title", e.next === "boot");
+      document.body.classList.toggle("title",  e.next === "boot");
       //  0.30.3 — the pad is hidden in battle, by the same mechanism.
       document.body.classList.toggle("battle", e.next === "battle");
+      document.body.classList.toggle("menu",   e.next === "menu");
     } catch (_) {}
   });
 
