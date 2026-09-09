@@ -213,6 +213,26 @@ MODULE MAP — search for the banner to jump
       This is the rule the line above it has followed since 0.14.3 — a control
       is shown only where it does something.                               */
   body.battle #menuBtn{display:none}
+
+  /*  0.48.0 — LANDSCAPE MOVES THE THUMBS TO THE SIDES.
+
+      In portrait the controls are bottom-anchored and cost height, which is
+      the scarce axis there. Turn the phone and the scarcity inverts: 540
+      canvas pixels of height and 960 of width. Leaving them at the bottom
+      spends 229 of those 540 on buttons — 42% — and the battle screen's
+      stack cannot fit in what is left.
+
+      So they move to the left and right edges, vertically centred, where the
+      abundant axis pays for them. AF.controls measures whichever edge each
+      control actually sits on, so nothing here needs to tell it which way the
+      phone is held; the numbers follow the CSS.
+
+      A/B stacks rather than sitting side by side, for the same reason: two
+      buttons in a column are 122px of the abundant axis instead of 122 of
+      the scarce one.                                                       */
+  body.landscape .pad{top:50%;bottom:auto;transform:translateY(-50%);left:10px}
+  body.landscape #actions{top:50%;bottom:auto;transform:translateY(-50%);
+                          right:12px;flex-direction:column-reverse;gap:14px}
   /*  0.15.0 — the target labels A and B. They are DOM buttons, so the labels
       are DOM too rather than canvas text guessing at where the buttons are.  */
   body.title #actions{flex-direction:row;gap:14px}
@@ -311,7 +331,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.47.0",
+  version:   "0.48.0",
   builtOn:   "2026-09-08",
   saveSchema: 5,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -470,7 +490,18 @@ AF.const = Object.freeze({
       AF-R-404 marks viewport/zoom FLEXIBLE. Landscape 960x540 on a 375x812
       phone resolved to scale 0.39 — a quarter of the screen. 540x960 gives
       0.69 and fills the width: 8.4 tiles across, 15 down.                  */
-  VIEW: Object.freeze({ W: 540, H: 960 }),
+  /*  0.48.0 — NOT frozen any more, and AF.view is its only writer.
+
+      The build supports both orientations from here, so the logical viewport
+      is 540x960 or 960x540 depending on how the phone is held. Eighty-nine
+      places read this object; every one of them reads `.W`/`.H` at draw time
+      rather than destructuring at definition time (checked), so the swap
+      MUTATES IN PLACE and every reader sees the new size on the next frame
+      without a single call site changing.
+
+      Replacing the object instead would have silently stranded the one module
+      that caches it (AF.title, `const V = AF.const.VIEW`) on the old size.  */
+  VIEW: { W: 540, H: 960 },
   BASIC_ATTACK_POWER: 10,     // the plain Attack command's power (0.7.0: was a literal in AF.battle.command)
 
   /*  Integer draw scales. World art is 16px-native shown at 64px (4x); UI is
@@ -3460,6 +3491,79 @@ AF.camera = (() => {
 })();
 
 /* ============================================================================
+   07c · VIEW — which way the phone is held (0.48.0)
+   ----------------------------------------------------------------------------
+   Two authored viewports, and the game picks one at boot and on every rotation.
+   Both are 16:9-family so the art scale never changes: the world is still drawn
+   at WORLD_SCALE 4 and the UI at UI_SCALE 3 in either orientation, and no
+   asset is resampled (AF-R-405).
+
+   WHY BOTH, when one is simpler. Landscape is where this game's screen wants
+   to be — four of six maps are wider than they are tall, the battle backdrop is
+   a wide band, and in portrait the fixed controls cover up to 229 of 960 canvas
+   pixels, which is the constraint that forced the two-column party strip, the
+   scrolling command panel and BAND_CEILING. Portrait is where a phone wants to
+   be: one hand, one thumb. The user's call was to keep both (AF-R-1007), and
+   the cost is stated where it lands — every screen that stacks now has two
+   layouts, and the suite checks both.
+
+   The swap MUTATES AF.const.VIEW rather than replacing it, because readers
+   hold the object. Nothing else may write it.
+   ========================================================================== */
+AF.view = (() => {
+  const PORTRAIT  = Object.freeze({ W: 540, H: 960 });
+  const LANDSCAPE = Object.freeze({ W: 960, H: 540 });
+  let mode = "portrait";
+
+  const isLandscape = () => mode === "landscape";
+  const sizeOf = (m) => (m === "landscape" ? LANDSCAPE : PORTRAIT);
+
+  /*  The WINDOW decides, not the screen: a phone rotated with the browser in
+      a split view is still whatever shape the page actually has. Falls back to
+      portrait with no DOM, which is what a headless suite gets.            */
+  function pick() {
+    try { return (window.innerWidth > window.innerHeight) ? "landscape" : "portrait"; }
+    catch (_) { return "portrait"; }
+  }
+
+  function apply(next) {
+    if (next !== "portrait" && next !== "landscape")
+      AF.rules.refuse("AF-R-401", `unknown viewport "${next}"`);
+    if (next === mode) return false;
+    mode = next;
+    const src = sizeOf(mode);
+    AF.const.VIEW.W = src.W;
+    AF.const.VIEW.H = src.H;
+    try { document.body.classList.toggle("landscape", isLandscape()); } catch (_) {}
+    /*  Re-fit before anyone redraws: the backing store is the viewport, and a
+        frame drawn against the old one would letterbox itself wrong for a
+        frame. AF-R-401's check lives inside fit().                         */
+    try { const c = document.getElementById("stage"); if (c) { AF.camera.fit(c); AF.render.attach(c); } }
+    catch (_) {}
+    AF.events.emit("view:changed", { mode, W: src.W, H: src.H });
+    AF.diag.note(`viewport: ${mode} ${src.W}x${src.H}`);
+    return true;
+  }
+
+  const refresh = () => apply(pick());
+
+  let bound = false;
+  function bind() {
+    if (bound) return false;
+    bound = true;
+    try {
+      window.addEventListener("resize", refresh);
+      window.addEventListener("orientationchange", refresh);
+    } catch (_) {}
+    refresh();
+    return true;
+  }
+
+  return { PORTRAIT, LANDSCAPE, isLandscape, sizeOf, pick, apply, refresh, bind,
+           mode: () => mode };
+})();
+
+/* ============================================================================
    15 · RENDER (AF-R-402, AF-R-405, AF-R-941, AF-R-1006)
    ========================================================================== */
 AF.render = (() => {
@@ -5878,7 +5982,8 @@ AF.battle = (() => {
     return [
       "AF-R-711: no verified battle animation frames exist; every ability's animation id resolves to nothing",
       "AF-R-708 combat readability was unverifiable until 0.43.0; the device then reported that with a full party the command panel covered the enemies entirely and the d-pad was hidden, so the fight could neither be seen nor navigated. Both fixed at 0.44.0 and both now asserted by a budget test rather than by a screenshot",
-      "the battle screen is laid out for PORTRAIT and does not fit in landscape: the control band there measures 420 canvas px against a ceiling of 292 (AF.battle.BAND_CEILING), because a 150px d-pad covers 413 of a 960-px-tall canvas once the canvas is letterboxed to a short strip. No orientation gate and no landscape layout exists. Portrait is the target and the number to design against is recorded",
+      "0.48.0 supports BOTH orientations. Landscape is unfinished in two places: the ascension board's node tree is a vertical column and overflows a 540px screen, and the vendor screen is unverified. Portrait is unaffected by either",
+      "the title's key art is a PORTRAIT illustration, so landscape centres it with dark margins either side. That is an asset question — a wide crop or a wide painting — not a layout one",
       "deep_barrow and ashen_reach are declared regions with encounter tables and no maps",
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
       "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
@@ -6130,7 +6235,13 @@ AF.battle = (() => {
       can produce, which is asserted rather than assumed — see the layout
       self-test. The backdrop still draws its full 448; the panel simply
       covers its lower part, which is what an opaque panel is for.        */
-  const GROUND_Y = 210;                    // enemy feet line
+  /*  0.48.0 — the feet line moves with the orientation. 210 of a 960-tall
+      screen is the upper fifth; 210 of a 540-tall one is the middle, which
+      leaves nothing under it for a log, a panel and a party strip. 150 keeps
+      the same PROPORTION of the shorter screen.                           */
+  const GROUND_Y_P = 210, GROUND_Y_L = 150;
+  const groundY = () => (AF.const.VIEW.W > AF.const.VIEW.H ? GROUND_Y_L : GROUND_Y_P);
+  const GROUND_Y = 210;                    // portrait feet line (kept for the tests that name it)
   const ENEMY_H_MAX = 128;                 // the tallest sprite the band must hold
 
   /*  Canvas pixels reserved at the bottom for the on-screen controls.
@@ -6155,6 +6266,11 @@ AF.battle = (() => {
     const b = AF.controls && AF.controls.band;
     return (typeof b === "number" && b >= 0) ? b : 250;
   };
+  /*  0.48.0 — how far in from each side the thumbs reach. Zero in portrait,
+      where the controls are bottom-anchored and cost height instead.      */
+  const sideL = () => (AF.controls && AF.controls.left)  || 0;
+  const sideR = () => (AF.controls && AF.controls.right) || 0;
+  const wide  = () => AF.const.VIEW.W > AF.const.VIEW.H;
 
   /*  The command panel scrolls rather than growing. Five commands fit; a
       skill list does not, and a panel sized to its longest list is a panel
@@ -6189,7 +6305,7 @@ AF.battle = (() => {
     enemyPoint(i, n, h) {
       const V = AF.const.VIEW;
       const slotW = V.W / (n + 1);
-      return { x: Math.round(slotW * (i + 1)), y: GROUND_Y - (h || 96) / 2 };
+      return { x: Math.round(slotW * (i + 1)), y: groundY() - (h || 96) / 2 };
     },
     /*  0.30.3 — CONTROL_BAND. The A and B buttons are DOM, fixed over the
         bottom-right of the canvas at roughly 26px up and 90px tall in CSS
@@ -6209,13 +6325,36 @@ AF.battle = (() => {
 
         Row-major, so the four read left-to-right in party order.          */
     partyGrid(n) {
-      const cols = n > 2 ? 2 : 1;
+      //  Landscape gives the strip its own column, so it never needs two.
+      const cols = (!wide() && n > 2) ? 2 : 1;
       return { cols, rows: Math.ceil(n / cols) };
+    },
+    /*  0.48.0 — in LANDSCAPE the bottom of the screen is not a stack of bands,
+        it is two columns. The command panel takes the left of the free centre
+        and the party strip the right, because 540px of height cannot hold
+        enemies, a log, a panel, a strip and a control band one above another —
+        measured: the panel's top landed at −61, off the top of the screen.
+
+        `zone` is the free rectangle: the whole width in portrait, and the
+        width between the thumbs in landscape.                             */
+    zone() {
+      const V = AF.const.VIEW;
+      return wide()
+        ? { x: sideL(), w: V.W - sideL() - sideR(), bottom: V.H - 10 }
+        : { x: 0, w: V.W, bottom: V.H - controlBand() };
     },
     partyPoint(i, n) {
       const V = AF.const.VIEW, S = AF.const.UI_SCALE;
       const g = layout.partyGrid(n);
-      const top = V.H - controlBand() - g.rows * PARTY_ROW - 8 * S;
+      const z = layout.zone();
+      if (wide()) {
+        //  Right half of the free centre, one column, above nothing.
+        const colW = z.w / 2;
+        const top = z.bottom - g.rows * PARTY_ROW - 8 * S;
+        return { x: z.x + colW + 30 * S,
+                 y: top + i * PARTY_ROW + 8 * S };
+      }
+      const top = z.bottom - g.rows * PARTY_ROW - 8 * S;
       return { x: (i % g.cols) * (V.W / g.cols) + 30 * S,
                y: top + Math.floor(i / g.cols) * PARTY_ROW + 8 * S };
     },
@@ -6228,7 +6367,15 @@ AF.battle = (() => {
       const V = AF.const.VIEW, S = AF.const.UI_SCALE;
       const rows = Math.min(rowCount, PANEL_ROWS);
       const h  = (rows + 1) * 9 * S + 26 * S;
-      const partyTop = V.H - controlBand() - layout.partyGrid(n).rows * PARTY_ROW - 8 * S;
+      const z  = layout.zone();
+      if (wide()) {
+        /*  Beside the strip, not above it: the panel keeps its full height
+            and the two share the width the thumbs left behind.            */
+        const colW = z.w / 2;
+        return { x: z.x + 4 * S, y: z.bottom - h, w: colW - 8 * S, h,
+                 bottom: z.bottom, partyTop: z.bottom - layout.partyGrid(n).rows * PARTY_ROW - 8 * S };
+      }
+      const partyTop = z.bottom - layout.partyGrid(n).rows * PARTY_ROW - 8 * S;
       return { x: 10 * S, y: partyTop - 6 * S - h, w: V.W - 20 * S, h,
                bottom: partyTop - 6 * S, partyTop };
     }
@@ -6497,7 +6644,7 @@ AF.battle = (() => {
               : null;
       const cx = layout.enemyPoint(i, live.length, 96).x;
       if (!r) {                                    // no art for this family
-        AF.render.placeholder(cx - 40, GROUND_Y - 96, 80, 96, u.name, 300);
+        AF.render.placeholder(cx - 40, groundY() - 96, 80, 96, u.name, 300);
         boxes.push({ u, x: cx, w: 80, h: 96 });
         return;
       }
@@ -6517,12 +6664,12 @@ AF.battle = (() => {
       ctx.fillStyle = "rgba(0,0,0,0.35)";
       if (typeof ctx.ellipse === "function") {
         ctx.beginPath();
-        ctx.ellipse(cx, GROUND_Y - 4, w * 0.32, 7, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx, groundY() - 4, w * 0.32, 7, 0, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        ctx.fillRect(cx - w * 0.32, GROUND_Y - 10, w * 0.64, 12);
+        ctx.fillRect(cx - w * 0.32, groundY() - 10, w * 0.64, 12);
       }
-      if (img) AF.render.blit(img, r, cx - w / 2, GROUND_Y - h, w, h, ctx);
+      if (img) AF.render.blit(img, r, cx - w / 2, groundY() - h, w, h, ctx);
       ctx.globalAlpha = 1;
       boxes.push({ u, x: cx, w, h });
     });
@@ -6532,7 +6679,7 @@ AF.battle = (() => {
     const targeting = ui.level === "target";
     const sel = targeting ? boxes[Math.min(ui.cursor, boxes.length - 1)] : null;
     if (sel) {
-      const pw = 46 * S, px = Math.round(sel.x - pw / 2), py = GROUND_Y + 8;
+      const pw = 46 * S, px = Math.round(sel.x - pw / 2), py = groundY() + 8;
       const np = AF.atlas.rect("ui_nameplate");
       if (img && np) AF.render.blit(img, np, px, py - 16 * S, np.w * S, np.h * S, ctx);
       ctx.fillStyle = "#2a1c14";
@@ -6540,7 +6687,7 @@ AF.battle = (() => {
       bar(ctx, px, py, pw, sel.u.hp / sel.u.hpMax(), "ui_bar_red");
       const cu = AF.atlas.rect("ui_cur_right");
       if (img && cu) AF.render.blit(img, cu, Math.round(sel.x - sel.w / 2 - 14 * S),
-                                    Math.round(GROUND_Y - sel.h / 2), cu.w * S, cu.h * S, ctx);
+                                    Math.round(groundY() - sel.h / 2), cu.w * S, cu.h * S, ctx);
     }
 
     /*  0.30.0 — IMPACT VFX. Drawn after the enemy sprites and their plate,
@@ -6577,7 +6724,7 @@ AF.battle = (() => {
         carries its own scrim. Grey text on a green field is not readable and
         the fight's only running commentary is not the place to find that out
         on a phone.                                                        */
-    const logTop = GROUND_Y + 14;
+    const logTop = groundY() + 14;
     const box = layout.panelBox(st.party.length,
                                 (cur && st.party.includes(cur)) ? options().length : 1);
     const logFloor = (cur && st.party.includes(cur)) ? box.y : box.bottom - 14 * S;
@@ -6587,15 +6734,19 @@ AF.battle = (() => {
         ? ui.log.flatMap(line => wrapLines(ctx, line, V.W - 20 * S)).slice(-(lines - 1))
         : [];
       const scrimH = (rows.length + 1) * 9 * S + 6 * S;
+      /*  0.48.0 — the log starts past the left thumb. Its scrim still spans
+          the full width, because it sits over the backdrop and a band that
+          stopped short would read as a torn edge; only the TEXT insets.   */
+      const logX = layout.zone().x + 10 * S;
       ctx.save();
       ctx.globalAlpha = 0.62;
       ctx.fillStyle = "#100c18";
       ctx.fillRect(0, logTop - 4 * S, V.W, scrimH);
       ctx.restore();
       ctx.fillStyle = "#a49cbb";
-      ctx.fillText(`round ${st.round} · ${st.kind}`, 10 * S, logTop);
+      ctx.fillText(`round ${st.round} · ${st.kind}`, logX, logTop);
       ctx.fillStyle = "#e4dcf2";
-      rows.forEach((row, i) => ctx.fillText(row, 10 * S, logTop + (i + 1) * 9 * S));
+      rows.forEach((row, i) => ctx.fillText(row, logX, logTop + (i + 1) * 9 * S));
     }
 
     /*  PARTY STRIP — bottom of the screen, name + hp + mp, and the acting
@@ -6603,7 +6754,13 @@ AF.battle = (() => {
         quarter of the height.                                              */
     const ROW = PARTY_ROW;
     const grid = layout.partyGrid(st.party.length);
-    const COL_W = V.W / grid.cols;
+    /*  0.48.0 — the strip lives in the zone, not across the screen. In
+        portrait the zone is the whole width and this is what it always was;
+        in landscape it is the right half of the space between the thumbs. */
+    const zone = layout.zone();
+    const stripX = wide() ? zone.x + zone.w / 2 : 0;
+    const stripW = wide() ? zone.w / 2 : V.W;
+    const COL_W = stripW / grid.cols;
     /*  Every x below is an offset INSIDE the member's cell, so one column and
         two columns are the same code with a different cell width. The widths
         are scaled by the cell rather than fixed, because a 62*S bar that fits
@@ -6618,8 +6775,19 @@ AF.battle = (() => {
     const HP_W = Math.round(INNER * 0.34), MP_W = Math.round(INNER * 0.20);
     const READ_X = PAD + HP_W + GAP + MP_W + GAP;
     const partyTop = layout.partyPoint(0, st.party.length).y - 8 * S;
+    /*  0.48.0 — a backing in LANDSCAPE only. In portrait the strip sits on
+        the black band under the backdrop and needs nothing; in landscape it
+        is over grass, and an HP readout on a bush is not a readout. Same
+        reasoning as the log's scrim, and the same colour.                 */
+    if (wide()) {
+      ctx.save();
+      ctx.globalAlpha = 0.62;
+      ctx.fillStyle = "#100c18";
+      ctx.fillRect(stripX, partyTop - 6 * S, stripW, grid.rows * ROW + 8 * S);
+      ctx.restore();
+    }
     st.party.forEach((u, i) => {
-      const cx = (i % grid.cols) * COL_W;
+      const cx = stripX + (i % grid.cols) * COL_W;
       const y  = partyTop + Math.floor(i / grid.cols) * ROW;
       const dead = u.hp <= 0;
       ctx.globalAlpha = dead ? 0.4 : 1;
@@ -6763,7 +6931,7 @@ AF.battle = (() => {
                tests because nothing could ask where anything was drawn. Every
                path "runs clean" whether or not the panel is on top of the
                monster, which is AUDIT_0_9_3's open finding 6 again.       */
-           layout, GROUND_Y, ENEMY_H_MAX, BAND, PARTY_ROW, PANEL_ROWS, BAND_CEILING, controlBand,
+           layout, GROUND_Y, groundY, ENEMY_H_MAX, BAND, PARTY_ROW, PANEL_ROWS, BAND_CEILING, controlBand,
            ui: { options, choose, back, state: () => ({ level: ui.level, cursor: ui.cursor, ability: ui.ability, item: ui.item, log: ui.log.slice() }) },
            get round() { return st ? st.round : 0; } };
 })();
@@ -12954,23 +13122,39 @@ AF.selftest = (() => {
           landscape, where a 150px pad covers 413 of 960 canvas pixels, and
           the answer is a layout nobody has designed rather than a constant.  */
       const bad = [];
-      const V = AF.const.VIEW, S = AF.const.UI_SCALE, B = AF.battle;
-      const desc = Object.getOwnPropertyDescriptor(AF.controls, "band");
-      let probe = 0;
+      const S = AF.const.UI_SCALE, B = AF.battle;
+      const dBand = Object.getOwnPropertyDescriptor(AF.controls, "band");
+      const dLeft = Object.getOwnPropertyDescriptor(AF.controls, "left");
+      const dRight = Object.getOwnPropertyDescriptor(AF.controls, "right");
+      const wasView = { W: AF.const.VIEW.W, H: AF.const.VIEW.H };
+      let probe = 0, probeL = 0, probeR = 0;
       try {
-        Object.defineProperty(AF.controls, "band",
-                              { get: () => probe, configurable: true });
-        for (const band of [19, 96, 138, 229, 250, B.BAND_CEILING]) {
+        Object.defineProperty(AF.controls, "band",  { get: () => probe,  configurable: true });
+        Object.defineProperty(AF.controls, "left",  { get: () => probeL, configurable: true });
+        Object.defineProperty(AF.controls, "right", { get: () => probeR, configurable: true });
+        /*  0.48.0 — BOTH ORIENTATIONS. The build supports portrait and
+            landscape, and the two spend opposite axes: portrait reserves
+            height at the bottom, landscape reserves width at the sides.
+            Testing only portrait is how the landscape command panel came to
+            be laid out at y = -61, off the top of the screen.            */
+      for (const orient of ["portrait", "landscape"]) {
+        const size = AF.view.sizeOf(orient);
+        AF.const.VIEW.W = size.W; AF.const.VIEW.H = size.H;
+        const V = AF.const.VIEW;
+        const bands = orient === "portrait" ? [19, 96, 138, 229, 250, B.BAND_CEILING] : [0, 10, 24];
+        for (const band of bands) {
           probe = band;
+          probeL = orient === "landscape" ? 200 : 0;
+          probeR = orient === "landscape" ? 190 : 0;
           for (let n = 1; n <= 4; n++) {
             for (const opts of [1, 3, 5, 8, 14]) {
               const box  = B.layout.panelBox(n, opts);
               const grid = B.layout.partyGrid(n);
-              const where = `band ${band}, party ${n}, ${opts} options`;
+              const where = `${orient}, band ${band}, party ${n}, ${opts} options`;
 
               //  1. The panel must never reach the enemies.
-              if (box.y <= B.GROUND_Y)
-                bad.push(`${where}: panel top ${Math.round(box.y)} is over the enemy band (feet ${B.GROUND_Y})`);
+              if (box.y <= B.groundY())
+                bad.push(`${where}: panel top ${Math.round(box.y)} is over the enemy band (feet ${B.groundY()})`);
 
               //  2. The panel must be bounded — this is what PANEL_ROWS buys.
               const maxH = (B.PANEL_ROWS + 1) * 9 * S + 26 * S;
@@ -12979,13 +13163,13 @@ AF.selftest = (() => {
 
               //  3. The party strip must clear the controls.
               const stripBottom = box.partyTop + grid.rows * B.PARTY_ROW;
-              if (stripBottom > V.H - band)
+              if (stripBottom > V.H - band + 1)
                 bad.push(`${where}: party strip ends at ${Math.round(stripBottom)}, under the controls at ${V.H - band}`);
 
               //  4. The log must have room for the round header AND at least
               //     one message. A log that can only print "round 1" tells the
               //     player nothing about the fight they are in.
-              const logTop = B.GROUND_Y + 14;
+              const logTop = B.groundY() + 14;
               const lines = Math.floor(Math.max(0, box.y - logTop - 6 * S) / (9 * S));
               if (lines < 2)
                 bad.push(`${where}: log has room for ${lines} line(s); it needs the header and a message`);
@@ -12993,14 +13177,26 @@ AF.selftest = (() => {
               //  5. Every member must be inside their own cell and on screen.
               for (let i = 0; i < n; i++) {
                 const p = B.layout.partyPoint(i, n);
-                if (p.y < box.bottom || p.y > V.H - band)
-                  bad.push(`${where}: member ${i} sits at ${Math.round(p.y)}, outside the strip`);
+                if (p.y > V.H - band + 1)
+                  bad.push(`${where}: member ${i} sits at ${Math.round(p.y)}, under the controls`);
                 if (p.x < 0 || p.x > V.W) bad.push(`${where}: member ${i} is off screen at x ${p.x}`);
+                //  and clear of the thumbs, which is what landscape reserves
+                if (p.x < probeL) bad.push(`${where}: member ${i} is behind the left thumb`);
               }
+              //  The panel must clear the thumbs too.
+              if (box.x < probeL) bad.push(`${where}: the command panel starts behind the left thumb`);
+              if (box.x + box.w > V.W - probeR)
+                bad.push(`${where}: the command panel runs under the right thumb`);
             }
           }
         }
-      } finally { Object.defineProperty(AF.controls, "band", desc); }
+      }
+      } finally {
+        Object.defineProperty(AF.controls, "band",  dBand);
+        Object.defineProperty(AF.controls, "left",  dLeft);
+        Object.defineProperty(AF.controls, "right", dRight);
+        AF.const.VIEW.W = wasView.W; AF.const.VIEW.H = wasView.H;
+      }
 
       /*  The ceiling is a claim about arithmetic, so it is checked as one: one
           pixel past it, the budget must actually fail. A BAND_CEILING that no
@@ -13012,7 +13208,7 @@ AF.selftest = (() => {
         const over = B.layout.panelBox(4, 5);
         const room = Math.floor(Math.max(0, over.y - (B.GROUND_Y + 14) - 6 * S) / (9 * S));
         if (room >= 2) bad.push(`BAND_CEILING ${B.BAND_CEILING} is not the real ceiling — 40px past it still fits`);
-      } finally { Object.defineProperty(AF.controls, "band", desc); }
+      } finally { Object.defineProperty(AF.controls, "band", dBand); }
 
       /*  And the control that made the fight unplayable. Left and right are
           hidden in battle because the battle UI reads only axis().y — but UP
@@ -15889,15 +16085,32 @@ AF.controls = (() => {
       conservative constant when there is no DOM (the headless harness), and
       is clamped so a bad measurement can never eat the whole screen.     */
   const FALLBACK = 250, MAX = 420;
-  let cached = FALLBACK, cachedAt = 0;
+  let cached = { band: FALLBACK, left: 0, right: 0 }, cachedAt = 0;
+  /*  0.48.0 — a control reserves the EDGE IT SITS ON, not always the bottom.
+
+      Until now this measured one number: how far the fixed controls reach up
+      from the canvas's bottom edge. That is the right question in portrait,
+      where the pad and A/B are bottom-anchored and height is the scarce axis.
+      It is the wrong question in landscape, where they move to the left and
+      right edges and WIDTH is what they cost — and asking it anyway returned
+      229 canvas pixels of a 540-tall canvas, which is how the battle screen
+      ended up drawing its command panel at y = −61.
+
+      So each control is measured against the edge it is actually near. A
+      control counts against the bottom band only if it really sits at the
+      bottom (its lower edge inside the last quarter of the canvas); otherwise
+      it counts against whichever side it is on. One rule, and it needs no
+      knowledge of the orientation — rotate the phone, move the CSS, and the
+      numbers follow.                                                       */
   function measure() {
+    const none = { band: 0, left: 0, right: 0 };
     try {
       const cv = document.getElementById("stage");
-      if (!cv) return FALLBACK;
+      if (!cv) return { band: FALLBACK, left: 0, right: 0 };
       const box = cv.getBoundingClientRect();
-      if (!box.height) return FALLBACK;
-      const toCanvas = AF.const.VIEW.H / box.height;
-      let band = 0;
+      if (!box.height || !box.width) return { band: FALLBACK, left: 0, right: 0 };
+      const toY = AF.const.VIEW.H / box.height, toX = AF.const.VIEW.W / box.width;
+      const out = { band: 0, left: 0, right: 0 };
       for (const id of ["pad", "actions"]) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -15907,21 +16120,34 @@ AF.controls = (() => {
             controls hidden and returned a band of 10px. Ask the style, and
             let a zero-sized rect stand for "not there".                   */
         const vis = (window.getComputedStyle ? window.getComputedStyle(el).display : "block") !== "none";
-        if (!vis) continue;                                  // hidden: costs nothing
+        if (!vis) continue;
         const r = el.getBoundingClientRect();
-        if (!r.height) continue;
-        //  How far the control reaches up from the canvas's bottom edge.
-        band = Math.max(band, (box.bottom - r.top) * toCanvas);
+        if (!r.height || !r.width) continue;
+
+        if ((box.bottom - r.bottom) < box.height * 0.25) {
+          //  Genuinely bottom-anchored: it costs height.
+          out.band = Math.max(out.band, (box.bottom - r.top) * toY);
+        } else if ((r.left + r.right) / 2 < (box.left + box.right) / 2) {
+          out.left = Math.max(out.left, (r.right - box.left) * toX);
+        } else {
+          out.right = Math.max(out.right, (box.right - r.left) * toX);
+        }
       }
-      return Math.max(0, Math.min(MAX, Math.round(band + 10)));
-    } catch (_) { return FALLBACK; }
+      const clamp = (n, max) => Math.max(0, Math.min(max, Math.round(n + 10)));
+      return { band: clamp(out.band, MAX),
+               left: out.left ? clamp(out.left, AF.const.VIEW.W * 0.4) : 0,
+               right: out.right ? clamp(out.right, AF.const.VIEW.W * 0.4) : 0 };
+    } catch (_) { return { band: FALLBACK, left: 0, right: 0 }; }
   }
   function refresh() { cached = measure(); cachedAt = Date.now(); return cached; }
   try { window.addEventListener("resize", refresh); window.addEventListener("orientationchange", refresh); } catch (_) {}
+  const fresh = () => { if (Date.now() - cachedAt > 500) refresh(); return cached; };
   return {
     //  Re-measured at most twice a second: it is a DOM read in a draw path.
-    get band() { if (Date.now() - cachedAt > 500) refresh(); return cached; },
-    get top() { return AF.const.VIEW.H - this.band; },
+    get band()  { return fresh().band; },
+    get left()  { return fresh().left; },
+    get right() { return fresh().right; },
+    get top()   { return AF.const.VIEW.H - this.band; },
     refresh, measure
   };
 })();
@@ -16000,7 +16226,13 @@ AF.speech = (() => {
     /*  0.9.0 — 108 rather than 72. The frame's corners are 48px on screen, so
         a 72px box could never hold them; the clamp in nineSlice now keeps that
         from rendering broken, but the bubble wants the room anyway. */
-    const V = AF.const.VIEW, pad = 10, bw = V.W - pad * 2;
+    /*  0.48.0 — the bubble insets past the thumbs. In portrait AF.controls
+        reports no side band and this is the 10px it always was; in landscape
+        the pad sits at the left edge and A/B at the right, and a bubble that
+        started at x=10 put its first word under a d-pad.                  */
+    const V = AF.const.VIEW;
+    const pad = Math.max(10, (AF.controls && AF.controls.left) || 0);
+    const bw = V.W - pad - Math.max(10, (AF.controls && AF.controls.right) || 0);
 
     /*  0.9.2 — the box is measured to its CONTENT, so it must be wrapped
         before the frame is drawn. The font is therefore set here rather than
@@ -21551,8 +21783,21 @@ AF.title = (() => {
         block placed UP from BOTTOM (where the fixed d-pad and A/B begin), and
         the tagline in what remains. Every gap is relative to those two, so
         moving either moves everything with it.                             */
-    const mid = V.W / 2;
-    let y = 72 * S;
+    /*  0.48.0 — LANDSCAPE PUTS THE TITLE BESIDE THE MENU, not above it.
+
+        The column reads down: wordmark, rule, subtitle, then the button block
+        placed UP from BOTTOM. In 960 pixels of height that is a comfortable
+        page. In 540 it is not: BOTTOM lands at 258, four buttons and their
+        gaps are 192, and the block starts at −39 — off the top, which is
+        exactly what a landscape screenshot showed, with the wordmark drawn
+        through the tagline underneath it.
+
+        So the two halves separate along the abundant axis. The wordmark keeps
+        the left, the buttons take the right, and each is centred in its own
+        half. Nothing about the portrait column changes.                    */
+    const wideView = V.W > V.H;
+    const mid = wideView ? V.W * 0.30 : V.W / 2;
+    let y = wideView ? V.H * 0.30 : 72 * S;
 
     y = wordmark(ctx, mid, y) + 3 * S;
     rule(ctx, mid, y + 2 * S, 62 * S);
@@ -21561,7 +21806,7 @@ AF.title = (() => {
     ctx.fillStyle = INK.pale;
     shadowText(ctx, "Rowan's Hold", mid, y);
 
-    if (view === "menu")     drawMenu(ctx, mid);
+    if (view === "menu")     drawMenu(ctx, wideView ? V.W * 0.72 : mid);
     if (view === "confirm")  drawConfirm(ctx, mid);
     if (view === "options")  drawOptions(ctx, mid);
     if (view === "credits")  drawCredits(ctx, mid);
@@ -21572,7 +21817,10 @@ AF.title = (() => {
   /*  The d-pad and A/B are position:fixed over the VIEWPORT, not the canvas,
       so nothing here can lay itself out around them. Everything sits above
       BOTTOM, which is the line they start at.                               */
-  const BOTTOM = () => V.H - 94 * S;
+  /*  Where the fixed controls begin. In portrait that is 94*S up from the
+      bottom; in landscape they are at the sides, so the column may use the
+      full height and only needs a margin.                                  */
+  const BOTTOM = () => V.H - (V.W > V.H ? 12 * S : 94 * S);
 
   function drawMenu(ctx, mid) {
     const list = rows();
@@ -21581,7 +21829,10 @@ AF.title = (() => {
         without crowding the subtitle above them.                            */
     const bw = Math.min(V.W - 44 * S, 130 * S), bh = 13 * S, gap = 4 * S;
     const blockH = list.length * bh + (list.length - 1) * gap;
-    let y = BOTTOM() - blockH - 35 * S;
+    /*  Landscape centres the block in the height it has; portrait keeps
+        hanging it off BOTTOM, which is what the tagline below it expects. */
+    let y = (V.W > V.H) ? Math.max(8 * S, (V.H - blockH) / 2 - 6 * S)
+                        : BOTTOM() - blockH - 35 * S;
     const bx = mid - bw / 2;
 
     list.forEach((row, i) => {
@@ -21780,6 +22031,10 @@ function bootFallback(e) {
 
 function bootInner() {
   const canvas = document.getElementById("stage");
+  /*  0.48.0 — the viewport picks its orientation BEFORE the first fit, so the
+      opening frame is drawn at the size the phone is actually being held at
+      rather than at portrait and then corrected. bind() calls refresh(). */
+  AF.view.bind();
   AF.camera.fit(canvas);
   AF.render.attach(canvas);
   addEventListener("resize", () => { AF.camera.fit(canvas); AF.render.attach(canvas); });
