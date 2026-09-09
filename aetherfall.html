@@ -276,7 +276,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.36.0",
+  version:   "0.36.1",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -5751,7 +5751,7 @@ AF.battle = (() => {
       "deep_barrow and ashen_reach are declared regions with encounter tables and no maps",
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
       "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
-      "AF-R-811: firstBossDefeated is declared, sits first in AF.integrity's FLOORS at 88, and is set by NOTHING in the game — only by self-tests. It is the first uncleared gate, so the act model's floor cannot move off 88 no matter which later flags are set. Felling the Custodian sets custodianDefeated and changes no floor. Whether he IS the first boss is act structure, which is canon and not the engine's to decide (AF-R-1007)",
+      "AF-R-811: the Custodian clears rows one and two of AF.integrity's FLOORS in one event (0.36.1 — he is the demo's only boss), so the act model jumps 88 -> 58 and the 74 tier never occurs. A fuller game gives firstBossDefeated to an enemy met before the barrow and 74 returns on its own",
       "the Custodian's aftermath prose is a draft (placeholder.custodian.seal.1/2) written from the user's canon beat, not the user's own words; his warning line is theirs verbatim and is approved",
       "the sigil among the Custodian's remains is described in canon and exists as no item — the aftermath narrates it and the bag does not receive it",
       "vendor zones are authored against the collision mask, not measured against the room art — the prompt may not read next to the drawn counter (AF-R-708, needs a device screenshot)",
@@ -12667,8 +12667,10 @@ AF.selftest = (() => {
       AF.content.REGIONS.barrow_downs.encounterRate = 0;
       const clearedWas = AF.story.get("barrow_gate_cleared");
       const feltWas    = AF.story.get("custodianDefeated");
+      const firstWas   = AF.story.get("firstBossDefeated");
       AF.story.set("barrow_gate_cleared", true);
       AF.story.set("custodianDefeated", false);
+      AF.story.set("firstBossDefeated", false);
       const floorBefore = AF.integrity.floor(AF.state.flags);
       AF.scene.enter("barrow_downs", "from_forest");
       const band = AF.barrowDowns.SEAL_BAND;
@@ -12679,6 +12681,7 @@ AF.selftest = (() => {
       const first = AF.battle.isActive();
       if (AF.battle.isActive()) AF.battle.end("victory");
       const flagged = AF.story.get("custodianDefeated");
+      const firstFlagged = AF.story.get("firstBossDefeated");
       const floorAfter = AF.integrity.floor(AF.state.flags);
       stand();                                   // standing there again must not re-fight
       const second = AF.battle.isActive();
@@ -12687,32 +12690,23 @@ AF.selftest = (() => {
       AF.content.REGIONS.barrow_downs.encounterRate = rate;
       AF.story.set("barrow_gate_cleared", clearedWas);
       AF.story.set("custodianDefeated", feltWas);
+      AF.story.set("firstBossDefeated", firstWas);
       AF.state.sceneId = saved.scene; AF.state.region = saved.region;
       AF.state.player.x = saved.x; AF.state.player.y = saved.y;
       AF.mode.set(saved.mode);
       if (!first) return "standing at the seal started no fight";
       if (!flagged) return "winning did not set custodianDefeated";
       if (second) return "the Custodian fought a second time after being felled";
-      /*  What actually happens, not what would be tidier. `gateOf` returns the
-          FIRST unmet flag, and `firstBossDefeated` sits ahead of this one at
-          88 — declared, in FLOORS, and set by nothing in the game. So felling
-          the Custodian does not move the floor today, and this asserts the
-          real pair rather than a hoped-for one.
-
-          The second half proves the wiring is nonetheless correct and live:
-          with the earlier gate met, `custodianDefeated` is worth 74. The day
-          something sets `firstBossDefeated`, this fight's consequence arrives
-          with no further work — and if someone gives the Custodian a private
-          flag instead, this goes red.                                     */
-      if (floorBefore !== 88 || floorAfter !== 88)
-        return `seal floor went ${floorBefore} -> ${floorAfter}; ` +
-               `expected 88 -> 88 while firstBossDefeated is unreachable`;
-      const standing = AF.integrity.floor({ firstBossDefeated: true, custodianDefeated: false,
-                                            dragonDefeated: false, caedrinDefeated: false });
-      const felled   = AF.integrity.floor({ firstBossDefeated: true, custodianDefeated: true,
-                                            dragonDefeated: false, caedrinDefeated: false });
-      return (standing === 74 && felled === 58)
-        || `with the first gate met, felling him moves the floor ${standing} -> ${felled}, expected 74 -> 58`;
+      /*  0.36.1 — the consequence, now that he IS the first boss. He clears
+          rows one and two of FLOORS in one event, so the floor jumps the 74
+          tier: 88 -> 58. That skip is the single-boss demo showing through a
+          four-boss table and is asserted deliberately — if a later pass gives
+          row one to an earlier enemy, this goes red and says so, which is the
+          right moment to look at it.                                      */
+      if (!firstFlagged)
+        return "winning did not set firstBossDefeated — he is the demo's first boss";
+      return (floorBefore === 88 && floorAfter === 58)
+        || `seal floor went ${floorBefore} -> ${floorAfter}, expected 88 -> 58`;
     });
 
     t("the Custodian has his own sheet and no mob shares it", () => {
@@ -18593,6 +18587,21 @@ AF.barrowDowns = (() => {
     AF.encounter.trigger("custodian_of_the_seal", (s) => {
       enc.grace = 4 * T;
       if (s.outcome !== "victory") { enc.banner = { summary: s, untilMs: 2600 }; return; }
+      /*  0.36.1 — he is the FIRST boss, by the user's decision (AF-R-1007):
+          this is a single-boss demo, so the one boss it has is the one that
+          opens the act model. Until now `firstBossDefeated` was declared,
+          sat first in AF.integrity's FLOORS at 88, and was set by nothing in
+          the game — so felling him advanced no gate at all and 0.35.0's test
+          asserted that stalemate rather than a consequence.
+
+          Both flags are set because both are true of the same event, and the
+          consequence is a jump, not a step: `gateOf` returns the next
+          UNCLEARED gate, so clearing rows one and two together takes the
+          floor 88 -> 58 and the 74 tier never exists in this demo. That is
+          what a one-boss game does to a four-boss table, and it is recorded
+          rather than smoothed over — a fuller game gives row one to someone
+          the party meets before the barrow, and 74 comes back on its own. */
+      AF.story.set("firstBossDefeated", true);
       AF.story.set("custodianDefeated", true);
       /*  The aftermath is narration, not dialogue, so it does not go through
           the speech bubble: that surface draws a speaker's name above the

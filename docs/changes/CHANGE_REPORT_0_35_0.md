@@ -332,3 +332,42 @@ Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
 - **The aftermath prose is my draft**, marked and listed in `AF.text.placeholders()`.
 - **The sigil is narrated and is not an item.**
 - **He has never been fought.** 230 HP, one phase, against a level-1 Aren at 54.
+
+---
+
+# 0.36.1 — the Custodian is the first boss
+
+Your call (AF-R-1007): a single-boss demo, so the one boss it has is the one
+that opens the act model.
+
+Felling him now sets **`firstBossDefeated` as well as `custodianDefeated`**,
+because both are true of the same event. Until now `firstBossDefeated` was
+declared, sat first in `AF.integrity`'s `FLOORS` at 88, and was set by nothing
+in the game — so the act model could not advance at all, and 0.35.0's test
+asserted that stalemate rather than a consequence.
+
+## The consequence is a jump, not a step
+
+`gateOf` returns the floor of the next *uncleared* gate, so clearing rows one
+and two in one event takes the seal floor **88 → 58** and the 74 tier never
+occurs in this demo.
+
+That skip is a one-boss game showing through a four-boss table. It is asserted
+deliberately rather than smoothed over: if a later pass gives row one to an
+enemy the party meets before the barrow, the test goes red and says so, which
+is exactly the moment to look at it. Recorded in `AF.battle.todo()` too.
+
+## A test bug of my own, caught by the test
+
+The first version read `AF.story.get("firstBossDefeated")` in its assertions —
+which run *after* the restore block, where the flag is put back to what it was.
+So it reported "winning did not set firstBossDefeated" while the code was
+correct.
+
+The established pattern in the sibling tests is to capture the value into a
+local before restoring, which `flagged` already did for `custodianDefeated`
+two lines above. Fixed the test, not the code. Revert-proven: removing the
+flag from the victory branch fails it with the same message, for the real
+reason this time.
+
+Self-test **388/388**, three consecutive runs, 0 boot faults, headless Chromium.
