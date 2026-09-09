@@ -177,7 +177,23 @@ MODULE MAP — search for the banner to jump
       over the canvas, so the canvas cannot lay itself out around them — the
       pad hides, and the battle screen lifts its own furniture clear of the
       A/B buttons that remain (see CONTROL_BAND).                          */
-  body.battle .pad{display:none}
+  /*  0.44.0 — AND IT MADE THE FIGHT UNPLAYABLE ON A PHONE. "There is no
+      walking in a fight" is true and it is not the whole truth: the battle
+      menu is a vertical LIST. Every command, every skill, every item and
+      every target is chosen with up and down, so hiding the pad left a
+      touch-only player able to press A on whatever row the cursor happened
+      to start on and nothing else. Attack, and only ever Attack.
+
+      It survived because a keyboard has arrow keys: on a desktop the fight
+      plays correctly and nothing in the suite can press a button that is not
+      drawn. Reported from the device, which is the only place it exists.
+
+      Left and right genuinely do nothing here — the battle UI reads
+      `AF.input.axis().y` and nothing else — so they hide, exactly as the
+      title screen already hides them for the same reason. Up and down stay,
+      and the battle screen lifts its furniture above whatever the pad
+      actually covers, which it now MEASURES instead of assuming.         */
+  body.battle .pad .l,body.battle .pad .r{display:none}
   /*  0.15.0 — the target labels A and B. They are DOM buttons, so the labels
       are DOM too rather than canvas text guessing at where the buttons are.  */
   body.title #actions{flex-direction:row;gap:14px}
@@ -276,7 +292,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.43.0",
+  version:   "0.44.0",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -5747,7 +5763,8 @@ AF.battle = (() => {
   function todo() {
     return [
       "AF-R-711: no verified battle animation frames exist; every ability's animation id resolves to nothing",
-      "AF-R-708 combat readability is unverifiable until there is real art on a real device",
+      "AF-R-708 combat readability was unverifiable until 0.43.0; the device then reported that with a full party the command panel covered the enemies entirely and the d-pad was hidden, so the fight could neither be seen nor navigated. Both fixed at 0.44.0 and both now asserted by a budget test rather than by a screenshot",
+      "the battle screen is laid out for PORTRAIT and does not fit in landscape: the control band there measures 420 canvas px against a ceiling of 292 (AF.battle.BAND_CEILING), because a 150px d-pad covers 413 of a 960-px-tall canvas once the canvas is letterboxed to a short strip. No orientation gate and no landscape layout exists. Portrait is the target and the number to design against is recorded",
       "deep_barrow and ashen_reach are declared regions with encounter tables and no maps",
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
       "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
@@ -5978,11 +5995,67 @@ AF.battle = (() => {
         3. Only the SELECTED target carries a name plate and HP bar. Four
            plates at once is the readout this replaces.                     */
   const BAND     = 448;                    // 7 world tiles — backdrop height
-  const GROUND_Y = 386;                    // enemy feet line — above the fade
-  /*  Canvas pixels reserved at the bottom for the on-screen A/B buttons. The
-      pad hides itself in battle (see the body.battle rule in the stylesheet);
-      A and B stay, because a fight is where they are used.                */
-  const CONTROL_BAND = 96;
+  /*  0.44.0 — the enemy feet line, RAISED from 386.
+
+      386 put the enemies in the lower half of the backdrop, and with a full
+      party of four the command panel's top edge landed at 294. The enemies
+      stood from 258 to 386. The panel is opaque and is drawn last, so on a
+      phone with four party members the entire enemy was behind it: the player
+      could not see what they were fighting. Reported from the device; it is
+      the layout, not the art, and it only appears at party sizes this project
+      never screenshotted.
+
+      210 puts the whole enemy band above every arrangement the budget below
+      can produce, which is asserted rather than assumed — see the layout
+      self-test. The backdrop still draws its full 448; the panel simply
+      covers its lower part, which is what an opaque panel is for.        */
+  const GROUND_Y = 210;                    // enemy feet line
+  const ENEMY_H_MAX = 128;                 // the tallest sprite the band must hold
+
+  /*  Canvas pixels reserved at the bottom for the on-screen controls.
+
+      0.44.0 — MEASURED, not a constant. This was 96, hard-coded from reading
+      the stylesheet, while 0.31.0 had already built AF.controls to answer
+      exactly this question by asking the DOM — two answers to "how much of
+      the canvas do the buttons cover", and the battle screen was using the
+      one that cannot be right on more than one device.
+
+      96 is wrong in BOTH directions, and both were measured:
+        · Where the canvas is height-limited and letterboxed top and bottom,
+          A and B sit BELOW the canvas entirely. The true band is 19 and 96
+          throws away 77 canvas pixels of usable screen.
+        · Where the canvas fills the viewport — the reporting device — the
+          buttons sit over it and the pad, once shown, reaches 229 canvas
+          pixels up. 96 draws the party strip underneath them.
+      AF.controls.band re-measures on resize and rotation and falls back to a
+      conservative 250 with no DOM, which is the safe direction for a headless
+      run: it reserves too much rather than drawing under a control.       */
+  const controlBand = () => {
+    const b = AF.controls && AF.controls.band;
+    return (typeof b === "number" && b >= 0) ? b : 250;
+  };
+
+  /*  The command panel scrolls rather than growing. Five commands fit; a
+      skill list does not, and a panel sized to its longest list is a panel
+      that decides the whole screen's budget by how many spells someone has
+      learned. Bounded here, so every arrangement below has a known height. */
+  const PANEL_ROWS = 5;
+
+  /*  The largest control band this layout can absorb and still satisfy every
+      rule the budget test asserts. DERIVED, not chosen: with four members the
+      strip is two rows of PARTY_ROW, the panel is at most PANEL_ROWS deep,
+      and the log needs a header plus one message between the enemies' feet
+      and the panel's top edge. Solving that for the band gives 292.
+
+      AF.controls clamps its own measurement at 420, and 420 is what a phone
+      in LANDSCAPE reports: the canvas keeps its 540x960 aspect, so it becomes
+      a short strip, and a d-pad fixed at 150 CSS pixels then covers 413 of
+      the 960 canvas pixels. Between 292 and 420 this screen does not fit, and
+      that is recorded in todo() rather than papered over — the game is built
+      portrait, VIEW is portrait, and rotating it is a feature nobody has
+      designed. The test asserts the portrait range and names the ceiling, so
+      the day someone designs it there is a number to design against.      */
+  const BAND_CEILING = 292;
 
   /*  0.30.0 — ONE LAYOUT TRUTH. The draw computed enemy slots inline and
       the party strip computed its rows inline; the impact layer needs both,
@@ -6004,12 +6077,47 @@ AF.battle = (() => {
         two members' HP bars sat under the buttons and the right-hand
         `hp/hpMax` text was clipped by them. Everything the battle draws at
         the bottom now stops above this band.                              */
+    /*  0.44.0 — TWO COLUMNS above two members, and the reason is arithmetic
+        rather than taste. One column of four rows is 180px of a 960px screen;
+        the same four in two columns is 90. That 90px is what buys the log
+        back: with the pad shown, a full party and a one-column strip, the
+        room left between the enemies' feet and the command panel was one
+        line — the round header — and every "X appears", every damage figure
+        and every status message had nowhere to draw. A fight the player
+        cannot read is the same defect as a fight they cannot see.
+
+        Row-major, so the four read left-to-right in party order.          */
+    partyGrid(n) {
+      const cols = n > 2 ? 2 : 1;
+      return { cols, rows: Math.ceil(n / cols) };
+    },
     partyPoint(i, n) {
-      const V = AF.const.VIEW, S = AF.const.UI_SCALE, ROW = 22 * S;
-      const top = V.H - CONTROL_BAND - n * ROW - 8 * S;
-      return { x: 60 * S, y: top + i * ROW + 8 * S };
+      const V = AF.const.VIEW, S = AF.const.UI_SCALE;
+      const g = layout.partyGrid(n);
+      const top = V.H - controlBand() - g.rows * PARTY_ROW - 8 * S;
+      return { x: (i % g.cols) * (V.W / g.cols) + 30 * S,
+               y: top + Math.floor(i / g.cols) * PARTY_ROW + 8 * S };
+    },
+    /*  0.44.0 — the panel's own geometry, resolved once. draw() used to
+        compute this inline and the log measured a SECOND copy of it a few
+        lines above; the two agreed only because they were edited together,
+        which is the shape AF-R-801 exists to stop. One answer now, and the
+        self-test asks this rather than re-deriving it.                    */
+    panelBox(n, rowCount) {
+      const V = AF.const.VIEW, S = AF.const.UI_SCALE;
+      const rows = Math.min(rowCount, PANEL_ROWS);
+      const h  = (rows + 1) * 9 * S + 26 * S;
+      const partyTop = V.H - controlBand() - layout.partyGrid(n).rows * PARTY_ROW - 8 * S;
+      return { x: 10 * S, y: partyTop - 6 * S - h, w: V.W - 20 * S, h,
+               bottom: partyTop - 6 * S, partyTop };
     }
   };
+  /*  0.44.0 — 22*S (66px) held a name line and a bar line with 30px of air
+      between them. Four members cost 264px of a 960px screen, and once the
+      pad is shown in a fight that air is the difference between the enemies
+      being visible and not. 14*S (42px) keeps both lines and spends the
+      padding.                                                             */
+  const PARTY_ROW = 15 * AF.const.UI_SCALE;
   /*  Where a unit is right now, by id, for anything that needs to point at
       it. Returns null off-battle or for a unit not in this fight, which the
       caller must handle — an effect with nowhere to be is not drawn.      */
@@ -6335,37 +6443,72 @@ AF.battle = (() => {
 
         The room is measured against whatever is nearest below: the command
         panel when the player is choosing, the strip otherwise.            */
-    const logTop = BAND + 6;                 // below the band, not over the fade
-    const partyTopEarly = layout.partyPoint(0, st.party.length).y - 8 * S;
-    const panelH = (cur && st.party.includes(cur))
-      ? (options().length + 1) * 9 * S + 10 * S : 14 * S;
-    const logFloor = partyTopEarly - 6 * S - panelH;
+    /*  0.44.0 — the log sits under the ENEMIES, not under the backdrop.
+
+        `BAND + 6` put it below all 448 pixels of drawn backdrop, which only
+        worked while the command panel started lower than that. It no longer
+        does — the panel's top is around 280 with a full party — so a log
+        anchored at 454 had negative room and drew nothing at all. The room it
+        actually has is between the enemies' feet and the panel, and that is
+        what it measures now.
+
+        It therefore draws OVER the backdrop rather than over black, so it
+        carries its own scrim. Grey text on a green field is not readable and
+        the fight's only running commentary is not the place to find that out
+        on a phone.                                                        */
+    const logTop = GROUND_Y + 14;
+    const box = layout.panelBox(st.party.length,
+                                (cur && st.party.includes(cur)) ? options().length : 1);
+    const logFloor = (cur && st.party.includes(cur)) ? box.y : box.bottom - 14 * S;
     const lines = Math.floor(Math.max(0, logFloor - logTop - 6 * S) / (9 * S));
     if (lines > 0) {
-      ctx.fillStyle = "#8f88a6";
+      const rows = lines > 1
+        ? ui.log.flatMap(line => wrapLines(ctx, line, V.W - 20 * S)).slice(-(lines - 1))
+        : [];
+      const scrimH = (rows.length + 1) * 9 * S + 6 * S;
+      ctx.save();
+      ctx.globalAlpha = 0.62;
+      ctx.fillStyle = "#100c18";
+      ctx.fillRect(0, logTop - 4 * S, V.W, scrimH);
+      ctx.restore();
+      ctx.fillStyle = "#a49cbb";
       ctx.fillText(`round ${st.round} · ${st.kind}`, 10 * S, logTop);
-      ctx.fillStyle = "#cfc8dd";
-      if (lines > 1) {
-        //  Wrap first, THEN take the newest rows that fit — so a long line
-        //  costs rows rather than being cut, and the room budget stays honest.
-        const rows = ui.log.flatMap(line => wrapLines(ctx, line, V.W - 20 * S));
-        rows.slice(-(lines - 1)).forEach((row, i) =>
-          ctx.fillText(row, 10 * S, logTop + (i + 1) * 9 * S));
-      }
+      ctx.fillStyle = "#e4dcf2";
+      rows.forEach((row, i) => ctx.fillText(row, 10 * S, logTop + (i + 1) * 9 * S));
     }
 
     /*  PARTY STRIP — bottom of the screen, name + hp + mp, and the acting
         member is outlined. Same information the old rows carried, in a
         quarter of the height.                                              */
-    const ROW = 22 * S;
+    const ROW = PARTY_ROW;
+    const grid = layout.partyGrid(st.party.length);
+    const COL_W = V.W / grid.cols;
+    /*  Every x below is an offset INSIDE the member's cell, so one column and
+        two columns are the same code with a different cell width. The widths
+        are scaled by the cell rather than fixed, because a 62*S bar that fits
+        a 540px row does not fit a 270px one and would draw over the readout
+        beside it.                                                          */
+    /*  Laid out as FRACTIONS OF THE CELL, not as fixed widths times a scale
+        factor. The first attempt scaled every width by COL_W/540 and the
+        `54/54` readout came out 48px wide in two columns — clipped to
+        "54/…", which is the one number in the row a player actually reads.
+        Proportions hold at both widths; scaled constants do not.          */
+    const PAD = 8 * S, INNER = COL_W - 2 * PAD, GAP = 3 * S;
+    const HP_W = Math.round(INNER * 0.34), MP_W = Math.round(INNER * 0.20);
+    const READ_X = PAD + HP_W + GAP + MP_W + GAP;
     const partyTop = layout.partyPoint(0, st.party.length).y - 8 * S;
     st.party.forEach((u, i) => {
-      const y = partyTop + i * ROW;
+      const cx = (i % grid.cols) * COL_W;
+      const y  = partyTop + Math.floor(i / grid.cols) * ROW;
       const dead = u.hp <= 0;
       ctx.globalAlpha = dead ? 0.4 : 1;
       if (u === cur) {
         ctx.strokeStyle = "#e8d05a"; ctx.lineWidth = 2;
-        ctx.strokeRect(6 * S, y - 2, V.W - 12 * S, ROW - 4);
+        /*  0.44.0 — the outline is the CELL, not the screen width, and it is
+            the full row height. At ROW-4 it cut through a 22px bar that
+            starts 20px down, which read as a box drawn wrong rather than as
+            a selection.                                                    */
+        ctx.strokeRect(cx + 4 * S, y - 3, COL_W - 8 * S, ROW - 2);
       }
       /*  0.10.0 — names are clipped to the column, not trusted to fit. The
           first render ran "[placeholder] Survivor" straight through the HP
@@ -6374,15 +6517,23 @@ AF.battle = (() => {
           Measuring and clipping is the fix; shortening the marker is not,
           because the marker is the point.                                  */
       ctx.fillStyle = st.guarding.has(u.id) ? "#8fb0e0" : "#cfc8dd";
-      ctx.fillText(clip(ctx, u.name, 88 * S), 8 * S, y + 2 * S);
-      bar(ctx, 8 * S, y + 12 * S, 62 * S, u.hp / u.hpMax(), "ui_bar_red");
-      bar(ctx, 74 * S, y + 12 * S, 44 * S, u.mp / u.mpMax(), "ui_bar_cyan");
+      /*  0.44.0 — the bar line sits at 7*S, not 12*S. The bar is 22px tall
+          (bar() explains why it cannot be shorter) and the row is now 45, so
+          the padding is what was spent, not the bar.                       */
+      const BY = y + 7 * S;
+      ctx.fillText(clip(ctx, u.name, Math.round(INNER * 0.5)), cx + PAD, y + 1 * S);
+      bar(ctx, cx + PAD,                    BY, HP_W, u.hp / u.hpMax(), "ui_bar_red");
+      bar(ctx, cx + PAD + HP_W + GAP,       BY, MP_W, u.mp / u.mpMax(), "ui_bar_cyan");
       ctx.fillStyle = "#8f88a6";
       /*  0.30.3 — clipped to the same width the bars use, and drawn left of
           the buttons' column rather than into it.                          */
-      ctx.fillText(clip(ctx, `${u.hp}/${u.hpMax()}`, 44 * S), 124 * S, y + 12 * S);
+      ctx.fillText(clip(ctx, `${u.hp}/${u.hpMax()}`, COL_W - PAD - READ_X), cx + READ_X, BY);
       const stx = (u.statusEffects || []).map(e => AF.content.status(e.id)?.name || e.id).join(" ");
-      if (stx) { ctx.fillStyle = "#c8a05a"; ctx.fillText(clip(ctx, stx, 60 * S), 100 * S, y + 2 * S); }
+      if (stx) {
+        ctx.fillStyle = "#c8a05a";
+        const sx = cx + PAD + Math.round(INNER * 0.5) + GAP;
+        ctx.fillText(clip(ctx, stx, Math.max(0, cx + COL_W - PAD - sx)), sx, y + 1 * S);
+      }
       ctx.globalAlpha = 1;
     });
 
@@ -6400,16 +6551,30 @@ AF.battle = (() => {
           border, and the target list's third enemy hung half outside it.
           This is the same clamped-corner arithmetic 0.9.0 hit with the
           speech bubble, in the one panel that was never re-checked.       */
-      const ph = (opts.length + 1) * 9 * S + 26 * S, pw = V.W - 20 * S;
-      const py = panelBottom - ph, px = 10 * S;
+      /*  0.44.0 — a WINDOW onto the options, not all of them. A skill list is
+          as long as the character's spellbook, and a panel that grows with it
+          decides the whole screen's budget by how many spells someone learned
+          — which is how the enemies ended up behind it.
+
+          The window follows the cursor and never scrolls past either end, so
+          the selected row is always drawn and the list never shows blank
+          rows below the last option. `>` and `<` mark that there is more.  */
+      const view = layout.panelBox(st.party.length, opts.length);
+      const shown = Math.min(opts.length, PANEL_ROWS);
+      const first = Math.max(0, Math.min(ui.cursor - (shown >> 1), opts.length - shown));
+      const ph = view.h, pw = view.w, py = view.y, px = view.x;
       panel(ctx, px, py, pw, ph);
       ctx.fillStyle = "#e0be7c";
-      ctx.fillText(`${cur.name} — ${ui.level}`, px + 6 * S, py + 9 * S);
+      const more = opts.length > shown
+        ? `  ${first > 0 ? "▲" : " "}${first + shown < opts.length ? "▼" : " "}` : "";
+      ctx.fillText(`${cur.name} — ${ui.level}${more}`, px + 6 * S, py + 9 * S);
       const AICON = 16;
-      opts.forEach((o, i) => {
+      opts.slice(first, first + shown).forEach((o, k) => {
+        const i = first + k;
         const s2 = i === ui.cursor;
         ctx.fillStyle = o.disabled ? "#5a5470" : s2 ? "#ffffff" : "#cfc8dd";
-        const ry = py + (i + 1) * 9 * S + 9 * S;
+        //  k, not i: the row's place in the WINDOW, not in the whole list.
+        const ry = py + (k + 1) * 9 * S + 9 * S;
         const key = ui.level === "skill" ? "icon_ability_" + o.id
                   : ui.level === "item"  ? "icon_item_" + o.id : null;
         const ir = key && img ? AF.atlas.rect(key) : null;
@@ -6470,6 +6635,14 @@ AF.battle = (() => {
                command menu forever; a draw test needs the same honesty.   */
            get animT() { return animT; }, set animT(v) { animT = v; },
            SLOT_PHASE_MS, screenPoint,
+           /*  0.44.0 — the layout resolvers and the numbers they answer with,
+               exposed so the suite can check the SCREEN BUDGET without a
+               screenshot. The defect this closes — a full party pushing the
+               command panel over the enemies — was invisible to 395 passing
+               tests because nothing could ask where anything was drawn. Every
+               path "runs clean" whether or not the panel is on top of the
+               monster, which is AUDIT_0_9_3's open finding 6 again.       */
+           layout, GROUND_Y, ENEMY_H_MAX, BAND, PARTY_ROW, PANEL_ROWS, BAND_CEILING, controlBand,
            ui: { options, choose, back, state: () => ({ level: ui.level, cursor: ui.cursor, ability: ui.ability, item: ui.item, log: ui.log.slice() }) },
            get round() { return st ? st.round : 0; } };
 })();
@@ -12245,6 +12418,111 @@ AF.selftest = (() => {
         if (!AF.audio.ids().includes(trackId)) bad.push(`${sceneId} names missing track "${trackId}"`);
       }
       return bad.length === 0 || bad.join("; ");
+    });
+
+    t("the battle screen fits: nothing covers the enemies and nothing hides under a button", () => {
+      /*  0.44.0, and the test this build should have had since 0.30.3.
+
+          Reported from a phone: with a full party of four the command panel's
+          top edge landed at 294 and the enemies stood from 258 to 386, so the
+          player could not see what they were fighting. 395 tests passed on
+          that build. Every draw path runs clean whether or not the panel is
+          on top of the monster — AUDIT_0_9_3's open finding 6 — and the only
+          way to catch it is to assert the BUDGET rather than the drawing.
+
+          Driven across every party size, every menu length the game can
+          produce, and a range of control bands, because the band is measured
+          from the DOM at runtime and differs per device. 19 is a canvas
+          letterboxed top and bottom, where A and B fall off it entirely; 229
+          is the reporting device with the pad shown; 250 is the no-DOM
+          fallback; 420 is AF.controls' own clamp and stands for a device
+          nobody has tested on yet, up to the ceiling this layout is solved
+          for. Beyond BAND_CEILING it does not fit and todo() says so: that is
+          landscape, where a 150px pad covers 413 of 960 canvas pixels, and
+          the answer is a layout nobody has designed rather than a constant.  */
+      const bad = [];
+      const V = AF.const.VIEW, S = AF.const.UI_SCALE, B = AF.battle;
+      const desc = Object.getOwnPropertyDescriptor(AF.controls, "band");
+      let probe = 0;
+      try {
+        Object.defineProperty(AF.controls, "band",
+                              { get: () => probe, configurable: true });
+        for (const band of [19, 96, 138, 229, 250, B.BAND_CEILING]) {
+          probe = band;
+          for (let n = 1; n <= 4; n++) {
+            for (const opts of [1, 3, 5, 8, 14]) {
+              const box  = B.layout.panelBox(n, opts);
+              const grid = B.layout.partyGrid(n);
+              const where = `band ${band}, party ${n}, ${opts} options`;
+
+              //  1. The panel must never reach the enemies.
+              if (box.y <= B.GROUND_Y)
+                bad.push(`${where}: panel top ${Math.round(box.y)} is over the enemy band (feet ${B.GROUND_Y})`);
+
+              //  2. The panel must be bounded — this is what PANEL_ROWS buys.
+              const maxH = (B.PANEL_ROWS + 1) * 9 * S + 26 * S;
+              if (box.h > maxH)
+                bad.push(`${where}: panel is ${box.h} tall, over the ${maxH} cap`);
+
+              //  3. The party strip must clear the controls.
+              const stripBottom = box.partyTop + grid.rows * B.PARTY_ROW;
+              if (stripBottom > V.H - band)
+                bad.push(`${where}: party strip ends at ${Math.round(stripBottom)}, under the controls at ${V.H - band}`);
+
+              //  4. The log must have room for the round header AND at least
+              //     one message. A log that can only print "round 1" tells the
+              //     player nothing about the fight they are in.
+              const logTop = B.GROUND_Y + 14;
+              const lines = Math.floor(Math.max(0, box.y - logTop - 6 * S) / (9 * S));
+              if (lines < 2)
+                bad.push(`${where}: log has room for ${lines} line(s); it needs the header and a message`);
+
+              //  5. Every member must be inside their own cell and on screen.
+              for (let i = 0; i < n; i++) {
+                const p = B.layout.partyPoint(i, n);
+                if (p.y < box.bottom || p.y > V.H - band)
+                  bad.push(`${where}: member ${i} sits at ${Math.round(p.y)}, outside the strip`);
+                if (p.x < 0 || p.x > V.W) bad.push(`${where}: member ${i} is off screen at x ${p.x}`);
+              }
+            }
+          }
+        }
+      } finally { Object.defineProperty(AF.controls, "band", desc); }
+
+      /*  The ceiling is a claim about arithmetic, so it is checked as one: one
+          pixel past it, the budget must actually fail. A BAND_CEILING that no
+          longer binds would let the range above quietly stop testing
+          anything.                                                        */
+      try {
+        Object.defineProperty(AF.controls, "band",
+                              { get: () => B.BAND_CEILING + 40, configurable: true });
+        const over = B.layout.panelBox(4, 5);
+        const room = Math.floor(Math.max(0, over.y - (B.GROUND_Y + 14) - 6 * S) / (9 * S));
+        if (room >= 2) bad.push(`BAND_CEILING ${B.BAND_CEILING} is not the real ceiling — 40px past it still fits`);
+      } finally { Object.defineProperty(AF.controls, "band", desc); }
+
+      /*  And the control that made the fight unplayable. Left and right are
+          hidden in battle because the battle UI reads only axis().y — but UP
+          and DOWN must be there, or a touch-only player can press A on one
+          row and nothing else.                                            */
+      try {
+        const body = document.body, was = body.className;
+        try {
+          body.className = "battle";
+          const vis = (sel) => {
+            const el = document.querySelector(sel);
+            return el ? getComputedStyle(el).display !== "none" : false;
+          };
+          if (!vis('#pad .u') || !vis('#pad .d'))
+            bad.push("up/down are hidden in battle — the menu is a vertical list and a touch-only player could press A on one row and nothing else");
+          if (!vis("#pad")) bad.push("the whole d-pad is hidden in battle");
+          //  And the other half of the claim: left/right do nothing here, so
+          //  they should not be occupying a thumb's worth of screen.
+          if (vis('#pad .l') || vis('#pad .r'))
+            bad.push("left/right are shown in battle and the battle UI reads only axis().y");
+        } finally { body.className = was; }
+      } catch (_) { /* no DOM: nothing to assert */ }
+      return bad.length === 0 || bad.slice(0, 6).join("; ");
     });
 
     t("every scene has an ambience bed and every bed named exists", () => {
