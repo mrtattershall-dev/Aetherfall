@@ -276,7 +276,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.37.0",
+  version:   "0.38.0",
   builtOn:   "2026-09-08",
   saveSchema: 4,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -5752,6 +5752,7 @@ AF.battle = (() => {
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
       "the_hollow_dragon is declared, phased, and triggered by nothing — no scene starts it. custodian_of_the_seal was the same until 0.35.0 and now fires at the seal band at the end of the barrow trail",
       "AF-R-811: the Custodian clears rows one and two of AF.integrity's FLOORS in one event (0.36.1 — he is the demo's only boss), so the act model jumps 88 -> 58 and the 74 tier never occurs. A fuller game gives firstBossDefeated to an enemy met before the barrow and 74 returns on its own",
+      "there are no sound effects beyond footsteps: no menu, hit, death, door, save or encounter cue. AF.sfx exists and is one family deep",
       "the barrow and the Custodian fight play village music: TRACK_FOR maps barrow_downs to village_a because neither supplied piece is barrow music. The wrong cue is deliberate and visible rather than hidden by silence, the same call AF-R-303 makes for placeholder ground",
       "the Custodian's aftermath prose is a draft (placeholder.custodian.seal.1/2) written from the user's canon beat, not the user's own words; his warning line is theirs verbatim and is approved",
       "the sigil among the Custodian's remains is described in canon and exists as no item — the aftermath narrates it and the bag does not receive it",
@@ -12241,6 +12242,51 @@ AF.selftest = (() => {
       return bad.length === 0 || bad.join("; ");
     });
 
+    t("footsteps are wired, varied, and never repeat a clip twice running", () => {
+      /*  0.38.0. Three properties, and the third is the one five recordings
+          exist for. No audio is produced here — jsdom and a headless page
+          have no unlocked context — so this tests the picker and the wiring,
+          which is all that is testable without ears.                      */
+      const bad = [];
+      const fam = AF.sfx.VARIANTS.step_dirt || [];
+      if (fam.length < 2) bad.push(`step_dirt has ${fam.length} clip(s); variation needs at least 2`);
+      for (const id of fam) if (!AF.sfx.uriOf(id)) bad.push(`${id} is named by the family and not embedded`);
+      /*  Drive the real picker 200 times and assert it never hands back the
+          same clip twice running.                                         */
+      const picks = [];
+      for (let i = 0; i < 200; i++) { AF.sfx.playVariant("step_dirt"); picks.push(AF.sfx.lastOf("step_dirt")); }
+      for (let i = 1; i < picks.length; i++)
+        if (picks[i] === picks[i - 1]) { bad.push(`clip ${picks[i]} repeated back-to-back at ${i}`); break; }
+      if (new Set(picks).size !== fam.length)
+        bad.push(`only ${new Set(picks).size} of ${fam.length} clips ever played`);
+      /*  And the wiring: the step fires from the walk cycle's foot-plant
+          frames, which is a source-text assertion because the alternative is
+          driving 200 frames of real input inside the suite.               */
+      const code = AF.selftest.codeOf(AF.sceneKit.walk);
+      if (!/playVariant\("step_dirt"\)/.test(code)) bad.push("sceneKit.walk no longer plays a footstep");
+      if (!/frame === 0 \|\| player\.frame === 3/.test(code))
+        bad.push("the footstep is no longer tied to the measured foot-plant frames");
+      return bad.length === 0 || bad.join("; ");
+    });
+
+    t("a missing or locked audio context makes effects silent, never fatal", () => {
+      /*  AF-R-1004's rule applied to sound: an effect that cannot play must
+          return false, not throw. Boot runs the suite, so a throw here would
+          take the game down over a garnish.                               */
+      const bad = [];
+      try { if (AF.sfx.play("no_such_clip_probe") !== false) bad.push("an unknown clip did not report false"); }
+      catch (e) { bad.push(`an unknown clip threw: ${e.message}`); }
+      try { if (AF.sfx.playVariant("no_such_family_probe") !== false) bad.push("an unknown family did not report false"); }
+      catch (e) { bad.push(`an unknown family threw: ${e.message}`); }
+      const wasMuted = AF.sfx.muted();
+      try {
+        AF.sfx.setMuted(true);
+        if (AF.sfx.play(AF.sfx.ids()[0]) !== false) bad.push("a muted effect still reported playing");
+      } catch (e) { bad.push(`muting threw: ${e.message}`); }
+      finally { AF.sfx.setMuted(wasMuted); }
+      return bad.length === 0 || bad.join("; ");
+    });
+
     t("every embedded track is reachable from some scene", () => {
       /*  0.37.0 — the reverse of the test above, and the one that catches the
           failure this project keeps finding: a complete asset nobody can
@@ -15526,7 +15572,24 @@ AF.sceneKit = (() => {
                                                     : (a.y > 0 ? "down" : "up");
       const anim = AF.anim.get("citizen_walk");
       player.animT += dt * 1000;
-      if (player.animT >= anim.frameMs) { player.animT = 0; player.frame = (player.frame + 1) % 6; }
+      if (player.animT >= anim.frameMs) {
+        player.animT = 0; player.frame = (player.frame + 1) % 6;
+        /*  0.38.0 — a footstep lands on the frame the FOOT lands on, not on a
+            timer and not on distance walked. Both alternatives drift out of
+            sync with what is on screen; this cannot, because it is the same
+            event that advances the picture.
+
+            Frames 0 and 3 were MEASURED, not assumed (AF-R-921's habit applied
+            to timing): the silhouette of every citizen_down frame was read out
+            of the atlas, and the body sits lowest — weight on a planted foot —
+            at exactly those two. The cycle is symmetric, 25/27/26/25/27/26 px,
+            which is what a two-step six-frame walk should look like.
+
+            Silence is fine. AF.sfx.playVariant returns false before the first
+            gesture, without a context, and on a decode failure, and walking
+            must not care about any of that.                                */
+        if (player.frame === 0 || player.frame === 3) AF.sfx.playVariant("step_dirt");
+      }
     } else { player.frame = 0; player.animT = 0; }
     AF.state.player.moving = !!(a.x || a.y);
     if (world) AF.camera.follow(player, world, dt);
@@ -19570,6 +19633,12 @@ AF.audio = (() => {
            //  diagnostics panel and a harness can read the same answer the
            //  code reads rather than inferring it from ctxState.
            ctxLive, decoded: () => [...buffers.keys()],
+           /*  0.38.0 — shared with AF.sfx. One AudioContext per document: iOS
+               unlocks a CONTEXT, not a sound, so a second context would need a
+               second gesture and would sit suspended until it got one. The
+               music's gain node is not shared — effects carry their own, so
+               muting one never silences the other.                          */
+           context, isUnlocked: () => unlocked,
            status: () => ({ wanted, prepared, starting, playing, unlocked,
                             backend: srcNode ? "webaudio" : (el && !el.paused ? "element" : "none"),
                             ctxState: ctx ? ctx.state : (ctxBroken ? "unavailable" : "not-created"),
@@ -19577,6 +19646,146 @@ AF.audio = (() => {
                             readyState: el ? el.readyState : null,
                             error: el && el.error ? el.error.code : null }) };
 })();
+
+/* ============================================================================
+   19b · SFX — one-shot effects (0.38.0)
+   ----------------------------------------------------------------------------
+   The build has had music since 0.13 and no sound effects at all: walking, the
+   menus, a sword landing, the seal cracking — all silent. This is the channel
+   for the short ones.
+
+   A SEPARATE module from AF.audio rather than a function inside it, because
+   the two have opposite lifetimes. Music is one long cue that must survive a
+   scene change; an effect is fire-and-forget and may overlap itself. Sharing
+   the code would make one of those behaviours pretend to be the other.
+
+   What IS shared is the AudioContext, deliberately. iOS unlocks a CONTEXT, not
+   a sound — a second context would want its own gesture and would sit
+   suspended until it got one, which is the class of bug 0.13.1 and 0.13.2 were
+   spent on. The gain node is NOT shared: effects carry their own, so the music
+   setting and the effects setting are genuinely independent.
+
+   FLEXIBLE (AF-R-802):
+     · No media-element fallback. Music without Web Audio still plays through
+       the element; an effect without Web Audio is silence. Twenty overlapping
+       <audio> elements is worse than nothing on a phone, and a missing effect
+       is a missing garnish, not a missing feature.
+     · Decoded lazily on first unlock rather than at boot, so a device that
+       never receives a gesture never spends the work.
+   ========================================================================== */
+AF.sfx = (() => {
+  const VOLUME = 0.55;
+
+  /*  Five recordings of the same footfall, supplied by the user. One clip
+      played every step is the sound a game makes when nobody thought about
+      it, so the picker below never repeats a clip twice in a row.         */
+  const SRC = {
+    step_dirt_1: "data:audio/mpeg;base64,//tQxAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAVAAAR9AAMDAwMGBgYGBgkJCQkJDAwMDAwPDw8PElJSUlJVVVVVVVhYWFhYW1tbW15eXl5eYaGhoaGkpKSkpKenp6eqqqqqqq2tra2tsPDw8PDz8/Pz9vb29vb5+fn5+fz8/Pz8/////8AAAA5TEFNRTMuMTAwAaUAAAAALKcAABRAJAXaQgAAQAAAEfTFEpPFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/7UMQAAAkcpw4UYwABozCrdxJwA//4iOeACCHu7u49n3rRne71oiLv//tBMmTvYIQ5Ahlnk09MAYWnsECGHgAAEIyI9kCBz+GOUBB2D7ygYEgY4IeUOQ/DH1yf+CEkkcjkcjkcikLhjIBDfr0Ky2fzJGmMjMAgMNNMJseacOIriQzPqqIglgDhPdVMRzx6TPcJCqGT13mOx43EtxotX/s6M89yZ8//Zbt7DQgLzzHGjf//+eY5PGhn//99v/GiFCw3Aw9cQHq120KWygBdCAD/+1LEBIALeFNhnJSAAXUOK/j2DDjIDNJTQAwDgEira2M0z5IaYBctSSGCsHroIyn4x6bxGETg8kd4GtLXsF1UtOMFARgwoPNSZGNaKvFAopG/qaA0HwiCIkXSkWoA9DFqcrBix5olqyKd2hlM6mAcNgv5dA+LROOQOhIQzoMkoMolBiO5ykdPrTB15ZEpBmYXoJxFPR3Njg8Ghql5I+so0NCY+RuYJWtBa+t5aJqHovX1P7nAK61LVsYeUm4RLW8CnhmnjnmGRlcjJGQHCwJgJP/7UsQGAAvce1vGBNIBewlp8PYMOT0mClUHvGIkLxxLxKLJJTUYhWLzW3BO+xrFpFqS0Fw66r+lmwkUkAVUeaAz1x46g8SL8zCYqhoMoPOj1B2Sy5a5ClP5KGmXPEtlkqAiotfWllnQ79bKikEAtJDyDd0xBMP16cdiyIRT4eRFHho56Foi0ZqOFyXCmDBIEUKnYt/k2NJS2fUd/1N/a/izeP0KOq19uex5uotH292feV/Ib9poImpWuuYv5jXMsX5/bk33/+V6+KREiqq4kBPj//tSxAUAC4hbS4ewwYl8Dilw9JjZ8GAdhiHIZjuWGislMGCicwmoAhd6FVM6ir68ZlvEO+lIE607YDM5eVj2XCmLPhJsgoLQ8UUucu+/WH71/ZvtLz2Sd/5zW37/f///8+VrYm30bvVYuUAAgj4WocFDlYWQ3ywD7RKXwTDYmdOLs8mmYQQQIGISDrPOTJwTvPJW3JU91Md9mVVGoMGbSFeauwkp6E4genc/zLv/9Ws6Wk1ue+Xj1kcdEafYwOx7ve7O04zvVfeVUAACiEHYDx3/+1LEBQCKMIlRJiRpwXwOaXD2DOEHgr2YbVng8VgyvJVyqbmQSbCwVf5oSqEtEROatgslOpAnlLUNfSGNsRFj1IKAJ4MpSdPEavk0D6e/dSLN4qAhU7jQjQxXLIQeniQADpwhIxYBOj+S5Nj0KxAEFaOi5qqDVxGUvDIGkHYcHCkAaiCnUwVHVzMidRJelBrzOVbdbHaEB/+2H7glP9+F3ckqpa0f196ra+EY/1DHs+37v+uyDrVHt9ntxQnknAAAJKGlOUVIFQBlBVo0laHM9P/7UsQKgArwg0dmGG9BiY9ptPYMcIyJVo389Eq5WiVsF9AhBHwzbW3JGCkqQlbOLpZcDPLEjqjoiIgqwa0rRHEa1nRAScoaVVehQogfs71Op7+ul63xfrWs8rZBAaSbiRLkWIeA4EAdcE0khQ2ZrSIV4o1xX6AlDnYodDoYWTR4qylOZ0LviqBgYnFBOWOmgkEix0HHZwEHmYEfNvVa2tJoE2lnrUCsXnkNwEsNlkYu4Nh0ZatGef3J1q50AAQBxrMU5OA+mXj2biIoPDk/Eteg//tSxAuACjR1SyYYbsE+k2mwww2onYxRKGABhApN6gaafaI5PaItggq7OD7SFnyARBC6ZKAcOCwu8BkgsxqrLj/G+36ebrVs2M1Jkpev/0utFEEAAAbHkqjmOonioyCYtJkhDgZLgMk2uWXtHMUXH0wQdvzOra1W3aOWUKGq98yKQv+HRLDo0UeCQ6i1t9Qo3jMhXWBXIvFatu6AdkZmKrK0SiAAIFj0gEsppxNBSBRUNEiRIcGQXPppCCPKwikeFCF78UpJCW6SwKFAAKMMPGr/+1LEGIAJ0FVLhiTFAU2MafTEmOAaXQUwyfaw0kA2Eb6K8XXpvZ9s5VGD/jUUJYtoLtl7aSBABJSThTHgbCoDIEF5FRARSiITsHBOnqFrTfBc8I9xeltafnmQ8nYUgDTRzDb7ChZzi8mhh0MKYRdJSbiDTha2YJs6mM7SCcegBLrbsRbd1aUAAAAAkxtAyKiUgIyqpIEgFBQ+MkTQaJSQjQFONFAQWROIKJwdLCho3SeNfpkfWj5u7xQ8rmwhA8ESBASOZU0AFD4fTa8Xf7zTjP/7UsQlgApAl08kmHCBR4op9MMNmCtFn0/7GZaStpsgAAEEqCAHZ+RBFSCRZQOBpEJKA0eEwabW7SyR7ksNkNtMHDc6HS4ZUYxKEhQOmwZrGHiHLY22dDQTIsfb9QGU8NOqRCbm8FWCJOoKDlfQtj0siAISTl4lEAZjyjBARGiMmcJRkGcSSgdTBiyJQSAiHYuVEDh5NdQ0+4yPUxMVlEuWc6jlKAjQC7u26A6nE21JpaxgmIKFZrXe6wPKD9UKL6oAAAGi6Pg9kskFkJ3gsUGI//tSxDGACfw3UaYkY4E9EmkwwwnoSMIL54WdKLnORT1B2bLnDm3IJzorUPgjzTPlmatmVaa2FQqdIPCHTUblQ+T2eKBtl6RbZRD8zQlCm+/GVfN04UQQCCSofiJL6WwyDDE0IIhzo0ABsRI0FsDgxxyCJ+uWDpwXraUiuzknkU6s9STyWRVSfCioReSBthgg4XVnyrUanB8g6+v6VtQS+n7zaGp6Is2CiQAILHQN9HgUiePINQ9sjLUHiFITEEZvgmjiiHHtIlSYgZWI9oNcxyH/+1LEP4AKaKVNp5hpgU4UabDEjTAhGKjOqspwilFtfJU3PSVndhgAKHgAJkxSntsImqxNVNNpW/0r7He93lbCQAAE2rUVg3TgHyL9PqipRsAJwAlSCgYJk48IMBSRs4eNlaHSqJZfCNuCRTQrneXb3rGyXqDHDFW9iFuAgbUJYGrQxLmoeix2YZ7dL/7vQ0O7szEIFEpNWkA4EQD4hPphaFD5TPjkzS1JznVWM3CAQKC5lYT0NFgCNXWeV6eRdp1ZmZEUSJBVRYckVMXh8DiAaP/7UsRKAAo0oVGHmGmBRpLrfMGKEBJcveo18UUv9G5oxHS+upWFeEM1EQAAIBcQqMf70XAkxKg/4BshKrNDRUGUeIuHKP16PSqkmUhJGPBELgMsCSwydhMQmAqdYs61NLZiqrGPlutdTxRezsgoWJUmVoZdtf9euURlMzASKU4pAGHwqnBsLQeEYEC0vOBIWFc5glcINaJChskssTNj0dWTpas9Mt+zyphTYAaXuTa8YT2Di+ppH3Hqk/350Sx/IMZkK8RyrYVmQ0IRAAAlS8ew//tSxFYAilBTU+ekxsE6EGq8ww3QeJnipaXhFMFBURH7Y7sgUPyBQh4JBPNYypZMSQOhwqdbragZeKgaQtap71mz2gwcmtm084WFDjC/bh16kVMxDSXnEZ6ScRJaAAAABTigUCpQHRUUFQqQmS0wSJEThBOYiGHDkX5paFG7sOrPku+PW715JEkbNPBVTL2yiUiwqdQE1rEsbQ88qxpuSZXVcLk1CM2ELbK7nYuqz80hJIASae2B0VXg8HwnD+VkMpqissO1UGUlmOkW/BLvdgP/+1LEY4AKAFFX5iBsQUyN6bSEmDAxyCVqdAi8LYHyFTfZdxipEIzAxK4f/v/kH/vWhRZyFd1tNOKCB0Cu40S4LuKUHkUX67HJGUQAAUxc2AEMlpDQRJMAlWLUpmcoNVi9U6fz7jUbrVB+o6rVKAzr8Vj6nURXVvq9no6LTd0VDL6SaUI1ld60W+rO///4YV9yIDFHNsPOv4TG5a57afVVjjapRAAJTUwvFxOAiHI7ipcciorQlQpCOWj5tQVT1Ny3dzUNTSgv5u47aWGUSRU6Ef/7UsRvgAqhOVOmBFWBYKUpdMGKWAiPEArMEMKiYMsYBSTJVV7ARFUHDRZXU705vOtF2/oF0K7N7eIBBAACJSlGkfWAEPAcPxLhHwDggDgSxrDYnRyZQMavbSja/VCKobR2gXe/xjadiMBOEjagudJE4arIujFnsFWgR5a9BOpThrXIRtx4lFUHHsj9yKKVrJACJAAABUB6g4QviDDsOAXF5GShOEZMbEolGZiSMPIH1tAv12OK2XhPyEhMyUKoD7kSegwbdNC17f5812Xmktt9//tSxHaACoxdSaWwwYFYjui0xI2Ymta/Lsu/8MdPUf+jP3+H/XpOf+nQ440AmkACk3bRIqc4zNQ00x3qlJKhdlzWkMWVO/Le/alQrnEUgQIU9XdGa3UKIflHJ2yuINP+9eL5GHS1DoVWG6NTcB/aGrQ26L3/7t+qI1a/FfHxuVaKDUn/c4/qrbIShIKTblzUOcjnY+T9OFDmk/oaGtheleW2Kki+s5TNzQyMVy+WXlLeappNoprkCmffZpp6ecJOujAxKBQ0MBwkNGCi8JqKu1v/+1LEfwAK6Fs/p7DDSXGTKHTzDhEw0ZqPB21mdejHuaLFwqk4px7LZSSREgAlNzBvEVMU9FebxupVkPBLNkA/XkiKZswHz5DlCvxSkbzOOizbl1Eg5FHjPdWcmQLNzFy+dZQgoK+U4f9QvEUuTueUDqqZHgJ3vfq/iv/H1tNL8Ah3DpNixHtZC+2766tISVLjeeJEoctn8X5aRS5bToiotRRlG5wEG7FBdQ2XqF7iGSEq1FnIeStoLi0pHznvEUgqQKgQNsaqSFiokFUjwl0Pff/7UsSDAAuki0enmHLBhhlodPMOUQJa3/CTbUB7OsfCbrbbQAACLbgTg5iZJ8uxKzsUbig3zpiZjKEBYBgcKc7AGMs0lJ5izLJQcDHkV4ctXpergLAihALDmKPVHRcasNFLg9DQTGVRIkcp+pJFrR6JWYKttpW77X6IEpBpQBNCM0fQ33jmvrsx0JfNZgE7buvrKBwAkYmE1s7OWhstUxfzcRMkVshSKgsRAVUSlaAKGUnU1IBpYVPJpcSJors1jVhk6ZshUA0KReuwAADE9AWQ//tSxIGACkyXRYeYbuFUj2c08w2g5VIQpVMTSSlbDKzSJcMlia4kJL4nABPEIE0IQzBr6skajXOS3mlBVAw41Ai1kYp8qf6S4dlQlLLCQFdI9R6IpXlc7JcS1Wan//h3/7dagAAAALwlzJgoYGDBWWOUWWU7ejRQGWYfFw7O7P/UnFlxebNGlFAyHbp9jKiKR/ovoqIpHZ+v///YxUBg4bu01UxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+1LEi4AKmF07pjzBoU+RYwj0mTBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7UsSVA8f8/tchmE2IAAA0gAAABFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+    step_dirt_2: "data:audio/mpeg;base64,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",
+    step_dirt_3: "data:audio/mpeg;base64,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",
+    step_dirt_4: "data:audio/mpeg;base64,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",
+    step_dirt_5: "data:audio/mpeg;base64,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"
+  };
+  const VARIANTS = { step_dirt: ["step_dirt_1","step_dirt_2","step_dirt_3","step_dirt_4","step_dirt_5"] };
+
+  let gain = null, muted = false;
+  const lastPick = {}, buffers = new Map(), decoding = new Map();
+
+  const ids = () => Object.keys(SRC);
+
+  function bytesOf(id) {
+    const uri = SRC[id] || "";
+    const i = uri.indexOf(",");
+    if (i < 0) return null;
+    const bin = atob(uri.slice(i + 1));
+    const out = new Uint8Array(bin.length);
+    for (let n = 0; n < bin.length; n++) out[n] = bin.charCodeAt(n);
+    return out;
+  }
+
+  function node() {
+    const c = AF.audio.context && AF.audio.context();
+    if (!c) return null;
+    if (!gain) {
+      try { gain = c.createGain(); gain.gain.value = muted ? 0 : VOLUME; gain.connect(c.destination); }
+      catch (_) { gain = null; }
+    }
+    return gain ? c : null;
+  }
+
+  function decode(id) {
+    if (buffers.has(id))  return Promise.resolve(buffers.get(id));
+    if (decoding.has(id)) return decoding.get(id);
+    const c = node(), bytes = c && bytesOf(id);
+    if (!c || !bytes) return Promise.resolve(null);
+    const pr = new Promise((res) => {
+      try {
+        c.decodeAudioData(bytes.buffer.slice(0),
+          (buf) => { buffers.set(id, buf); res(buf); },
+          (e) => { AF.diag.warn("SFX", id + " failed to decode: " + ((e && e.message) || e)); res(null); });
+      } catch (e) { AF.diag.warn("SFX", id + " decode threw: " + e.message); res(null); }
+    }).then(b => { decoding.delete(id); return b; });
+    decoding.set(id, pr);
+    return pr;
+  }
+
+  /*  Fire and forget. Silence is always an acceptable outcome here: a missing
+      effect must never take a frame, a scene or the boot with it, so every
+      path returns false rather than throwing.                             */
+  function play(id) {
+    if (muted || !SRC[id]) return false;
+    if (!AF.audio.isUnlocked || !AF.audio.isUnlocked()) return false;
+    const c = node();
+    if (!c) return false;
+    const buf = buffers.get(id);
+    if (!buf) { decode(id); return false; }   // the next one lands; this is silent
+    try {
+      const src = c.createBufferSource();
+      src.buffer = buf; src.connect(gain); src.start(0);
+      return true;
+    } catch (e) { AF.diag.warn("SFX", id + " failed to start: " + e.message); return false; }
+  }
+
+  /*  A family plays a DIFFERENT member each time. Two identical footsteps in
+      a row is the artefact five recordings exist to avoid, so the previous
+      pick is excluded rather than merely made unlikely.
+
+      Math.random, NOT the seeded RNG — deliberately. AF-R-1012 keeps dialogue
+      out of the seeded stream so world state always gives the same line; the
+      same reasoning applies harder to a footstep, which would otherwise let
+      how far you walked decide what the encounter roll returns.           */
+  function playVariant(family) {
+    const list = VARIANTS[family];
+    if (!list || !list.length) return false;
+    let pool = list;
+    if (list.length > 1 && lastPick[family]) pool = list.filter(id => id !== lastPick[family]);
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    lastPick[family] = pick;
+    return play(pick);
+  }
+
+  function warm() { for (const id of ids()) decode(id); }
+
+  function setMuted(v) {
+    muted = !!v;
+    try { if (gain) gain.gain.value = muted ? 0 : VOLUME; } catch (_) {}
+    return muted;
+  }
+
+  return { play, playVariant, warm, ids, bytesOf, setMuted,
+           uriOf: (id) => SRC[id] || null,
+           muted: () => muted, VOLUME, VARIANTS,
+           decoded: () => [...buffers.keys()],
+           families: () => Object.keys(VARIANTS),
+           /*  0.38.0 — which clip the picker last chose. Exposed because the
+               no-repeat rule is the reason five recordings exist, and it has
+               to be testable without a speaker: a suite running headless can
+               never hear a footstep, but it can read the sequence of choices.
+               Stubbing the exported `play` does not work and should not —
+               `playVariant` calls the module's own binding, not the export. */
+           lastOf: (family) => lastPick[family] || null };
+})();
+
 
 AF.loop = (() => {
 
