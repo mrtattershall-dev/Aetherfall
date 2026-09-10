@@ -331,7 +331,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.49.1",
+  version:   "0.50.0",
   builtOn:   "2026-09-08",
   saveSchema: 5,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -4370,7 +4370,15 @@ AF.save = (() => {
       wanted = "overworld";
     }
     if (wanted && AF.mode.impl(wanted)) AF.mode.set(wanted);
-    AF.state.integrity = d.integrity; AF.state.money = d.money;
+    /*  0.49.2 — money is range-checked on the way in. A save is a file on a
+        device the player controls, and one carrying `money: -5000` loaded
+        straight through: every shop row then reads "can't afford" forever
+        with nothing saying why. The save layer already refuses garbage
+        shapes and future schemas; a number outside its own range is the same
+        kind of claim, so it is clamped rather than trusted. */
+    const money = Number(d.money);
+    AF.state.integrity = d.integrity;
+    AF.state.money = (isFinite(money) && money >= 0) ? Math.floor(money) : 0;
     AF.state.inventory = d.inventory; AF.state.quests = d.quests;
     AF.state.chests = d.chests; AF.state.puzzles = d.puzzles;
     /*  0.7.0 — the recruit FLAG is the authoritative record of who has joined
@@ -5990,6 +5998,7 @@ AF.battle = (() => {
       "AF-R-811: the Custodian clears rows one and two of AF.integrity's FLOORS in one event (0.36.1 — he is the demo's only boss), so the act model jumps 88 -> 58 and the 74 tier never occurs. A fuller game gives firstBossDefeated to an enemy met before the barrow and 74 returns on its own",
       "AF.sfx covers footsteps, doors, parries, and every element AF.battleVfx draws — but ice, lightning, shadow and radiant SHARE one generic magic impact rather than each having its own (0.41.0, FLEXIBLE). Still silent: menus, death, save, encounter start, the vendor, and every refusal", "AF.ambience gives all six scenes a bed (0.42.0), and 11 of the 14 supplied beds are unused: the Rain, Storm and Night variants need weather and a clock, and the two torch loops need a lit torch — this build removed torch pools when it went daylit",
       "the barrow and the Custodian fight play village MUSIC: TRACK_FOR maps barrow_downs to village_a because neither supplied piece is barrow music. The wrong cue is deliberate and visible rather than hidden by silence, the same call AF-R-303 makes for placeholder ground. Its AMBIENCE is right as of 0.42.0 — BED_FOR gives the barrow the cave bed — so the bed is carrying the scene and the score is fighting it",
+      "THE VITALS READOUT EXISTS IN ONE SCENE OF SIX. drawHud lives inside the rowans_hold module and nothing else calls it, so HP, MP and SEAL are shown in the village and nowhere else — not in the forest, not in the barrow, not in any interior. Measured at 0.49.2 by drawing all six scenes and looking for the labels. The barrow is where the seal band matters and where a party gets worn down, and it is the one place the bar is invisible. Whether the overworld shows vitals outside the village is a DESIGN call (AF-R-1007), not a defect against any stated rule, so it is recorded rather than answered: the repair, if wanted, is to hoist the call out of the scene and into the overworld mode, which is one home instead of six",
       "the Custodian is a LEVEL GATE that nothing announces. Simulated 30 fights a level, 0.49.1: level 1-3 win 0%, level 4 wins 13%, level 5 wins 37%, level 6 wins 77%, level 8 wins 90%. That is a well-shaped boss and it wants a party around 5-6. Nothing on the barrow trail says so, and a player who avoids encounters arrives at level 1 to an unfleeable fight they cannot win — reported from a phone at 0.48.0. Losing is handled (defeat revives at the Hold's gate) so it is a wall, not a softlock. Whether to gate the seal band, warn on approach, or leave it as a lesson is PACING, which is canon and the user's call (AF-R-1007)",
       "the Custodian's aftermath prose is a draft (placeholder.custodian.seal.1/2) written from the user's canon beat, not the user's own words; his warning line is theirs verbatim and is approved",
       "the sigil among the Custodian's remains is described in canon and exists as no item — the aftermath narrates it and the bag does not receive it",
@@ -6310,20 +6319,21 @@ AF.battle = (() => {
   const PANEL_ROWS = 5;
 
   /*  The largest control band this layout can absorb and still satisfy every
-      rule the budget test asserts. DERIVED, not chosen: with four members the
-      strip is two rows of PARTY_ROW, the panel is at most PANEL_ROWS deep,
-      and the log needs a header plus one message between the enemies' feet
-      and the panel's top edge. Solving that for the band gives 292.
+      rule the budget test asserts. DERIVED, not chosen, and MEASURED by
+      sweeping the band until the budget fails: 346.
 
-      AF.controls clamps its own measurement at 420, and 420 is what a phone
-      in LANDSCAPE reports: the canvas keeps its 540x960 aspect, so it becomes
-      a short strip, and a d-pad fixed at 150 CSS pixels then covers 413 of
-      the 960 canvas pixels. Between 292 and 420 this screen does not fit, and
-      that is recorded in todo() rather than papered over — the game is built
-      portrait, VIEW is portrait, and rotating it is a feature nobody has
-      designed. The test asserts the portrait range and names the ceiling, so
-      the day someone designs it there is a number to design against.      */
-  const BAND_CEILING = 292;
+      It was 292 until 0.49.2, when the panel took a fixed PANEL_ROWS however
+      little room was left. A 320px-wide phone — an iPhone SE, or any phone in
+      a small window — measures a 294px band, TWO PAST THAT CEILING, and the
+      consequence was live: the battle log had room for one line, so a player
+      saw "round 1" and nothing else about the fight. The suite was green
+      because its sweep tested the ceiling and the device measured past it.
+
+      The panel now spends a scrolling menu row before it spends the log, so
+      the ceiling moved to 346 and a real device sits comfortably inside it.
+      Landscape is no longer the exception it was — 0.48.0 gave the controls
+      the sides to reserve, so a landscape band is about 10.                */
+  const BAND_CEILING = 346;
 
   /*  0.30.0 — ONE LAYOUT TRUTH. The draw computed enemy slots inline and
       the party strip computed its rows inline; the impact layer needs both,
@@ -6396,9 +6406,25 @@ AF.battle = (() => {
         self-test asks this rather than re-deriving it.                    */
     panelBox(n, rowCount) {
       const V = AF.const.VIEW, S = AF.const.UI_SCALE;
-      const rows = Math.min(rowCount, PANEL_ROWS);
-      const h  = (rows + 1) * 9 * S + 26 * S;
       const z  = layout.zone();
+      /*  0.49.2 — the visible rows come from the ROOM LEFT, not from a
+          constant. On a 320px-wide phone — an iPhone SE, and any phone in a
+          small window — `AF.controls` measures a 294px band, two past
+          BAND_CEILING, and a fixed five-row panel left the log exactly ONE
+          line: the round header and nothing else. That is the failure the
+          budget test names in so many words, and it was live on a real
+          device while the suite was green, because the sweep tested the
+          ceiling and the device measured past it.
+
+          A tall band now costs a MENU ROW — which scrolls, and whose cursor
+          the window follows — rather than the whole log, which does not. */
+      const LOG_MIN = 2;                        // the header and one message
+      const bottomFor = wide() ? z.bottom
+                               : z.bottom - layout.partyGrid(n).rows * PARTY_ROW - 8 * S - 6 * S;
+      const room = bottomFor - (groundY() + 14) - 6 * S - LOG_MIN * 9 * S;
+      const fits = Math.floor((room - 26 * S) / (9 * S)) - 1;
+      const rows = Math.min(rowCount, PANEL_ROWS, Math.max(3, fits));
+      const h  = (rows + 1) * 9 * S + 26 * S;
       if (wide()) {
         /*  Beside the strip, not above it: the panel keeps its full height
             and the two share the width the thumbs left behind.            */
@@ -6908,7 +6934,11 @@ AF.battle = (() => {
       panelBottom = py;
     } else if (cur) {
       ctx.fillStyle = "#8f88a6";
-      ctx.fillText(`${cur.name} is acting…`, 10 * S, panelBottom - 10 * S);
+      /*  0.49.2 — past the left thumb, like the log above it. 0.48.0 moved
+          the log to `layout.zone().x + 10 * S` and this line, which stands in
+          the same place while an enemy takes its turn, kept a bare `10 * S`
+          and was drawn under the landscape d-pad. */
+      ctx.fillText(`${cur.name} is acting…`, layout.zone().x + 10 * S, panelBottom - 10 * S);
       panelBottom -= 14 * S;
     }
 
@@ -9288,6 +9318,7 @@ AF.selftest = (() => {
     results.length = 0;
     AF.diag.setQuiet(true);          // probes below fail rules on purpose
     const sessionBefore = snapshotSession();
+    const actorsBefore = new Set(AF.actors.byId.keys());
     offenders = []; watching = true;
     const moneyBefore = AF.state.money;
 
@@ -11760,6 +11791,124 @@ AF.selftest = (() => {
       return closed === "overworld" || `a second cancel left the mode at "${closed}"`;
     });
 
+    t("the engine's own text stays on the canvas and out of the thumbs", () => {
+      /*  0.49.2 audit. Two live defects, neither of which any test could see,
+          because every test that measures a layout measured a layout HELPER
+          and these are drawn straight to the context:
+
+            · the diagnostic band's lowest line — "N assets still unverified"
+              — was drawn with a top baseline at V.H - 6, and a 10px face puts
+              its glyph box at V.H + 3. Clipped in BOTH orientations, and
+              visible in the device screenshots the whole time.
+            · the battle's "X is acting…" line, which stands where the log
+              stands while an enemy takes its turn, kept a bare 10 * S after
+              0.48.0 moved the log itself past the left thumb — so in
+              landscape it was drawn under the d-pad.
+
+          The world layer is excluded on purpose: it is camera-anchored and is
+          MEANT to run off the edges. This is the engine's own text — the HUD
+          band and the battle screen — which is never anchored to anything but
+          the screen.                                                       */
+      const bad = [];
+      const S = AF.const.UI_SCALE;
+      const wasView = { W: AF.const.VIEW.W, H: AF.const.VIEW.H };
+      const wasMode = AF.state.mode;
+      const dBand  = Object.getOwnPropertyDescriptor(AF.controls, "band");
+      const dLeft  = Object.getOwnPropertyDescriptor(AF.controls, "left");
+      const dRight = Object.getOwnPropertyDescriptor(AF.controls, "right");
+      let probe = 0, probeL = 0, probeR = 0;
+      const ctx = document.getElementById("stage").getContext("2d");
+      try {
+        Object.defineProperty(AF.controls, "band",  { get: () => probe,  configurable: true });
+        Object.defineProperty(AF.controls, "left",  { get: () => probeL, configurable: true });
+        Object.defineProperty(AF.controls, "right", { get: () => probeR, configurable: true });
+
+        for (const orient of ["portrait", "landscape"]) {
+          const size = AF.view.sizeOf(orient);
+          AF.const.VIEW.W = size.W; AF.const.VIEW.H = size.H;
+          const V = AF.const.VIEW;
+          probe  = orient === "portrait" ? 229 : 10;
+          probeL = orient === "landscape" ? 114 : 0;
+          probeR = orient === "landscape" ? 86  : 0;
+
+          /*  Measured from the real metrics rather than assumed: these two
+              surfaces use different faces (10px mono for the band, the pack
+              font for the battle), and guessing a line height is how the
+              probe that found this reported false positives of its own. */
+          const draws = [];
+          const realFill = ctx.fillText.bind(ctx);
+          const spy = (label) => {
+            ctx.fillText = function (s, x, y) {
+              const m = ctx.measureText(String(s));
+              const asc = m.actualBoundingBoxAscent || 0, desc = m.actualBoundingBoxDescent || 0;
+              const top = ctx.textBaseline === "top" ? y : y - asc;
+              const x0 = ctx.textAlign === "right"  ? x - m.width
+                       : ctx.textAlign === "center" ? x - m.width / 2 : x;
+              draws.push({ label, s: String(s).slice(0, 22), x0, x1: x0 + m.width,
+                           top, bottom: top + asc + desc });
+              return realFill(s, x, y);
+            };
+          };
+
+          /*  A skip that reads as a pass is the failure mode this whole
+              audit was about, so a missing HUD is REPORTED. The first cut
+              guarded with `if (typeof sc.drawHud === "function")` and, when
+              the active scene turned out not to be the one that exports it,
+              quietly measured nothing and went green over a reverted fix. */
+          /*  Asked of the scene that OWNS the HUD, by id, rather than of
+              whichever scene the suite happens to be standing in — which,
+              when this test was written, was the guild hall. `drawHud` lives
+              in `rowans_hold` and nothing else calls it; that scope is a
+              separate question, recorded in todo(). */
+          const sc = AF.scene.get("rowans_hold");
+          if (!sc) bad.push(`${orient}: rowans_hold is not registered — the HUD was not measured`);
+          else if (typeof sc.drawHud !== "function")
+            bad.push(`${orient}: rowans_hold exposes no drawHud — the HUD was not measured`);
+          else {
+            spy("hud");
+            try { sc.drawHud(ctx); } catch (e) { bad.push(`${orient}: drawHud threw: ${e.message}`); }
+            finally { ctx.fillText = realFill; }
+          }
+
+          const wasBattle = AF.battle.isActive();
+          if (!wasBattle) AF.battle.start({ enemies: ["husk_lesser", "cairn_hound"] });
+          spy("battle");
+          try { AF.battle.draw(ctx); } catch (e) { bad.push(`${orient}: battle draw threw: ${e.message}`); }
+          finally { ctx.fillText = realFill; }
+          if (!wasBattle && AF.battle.isActive()) AF.battle.end("aborted");
+
+          for (const d of draws) {
+            const where = `${orient}/${d.label} "${d.s}"`;
+            if (d.bottom > V.H + 1)
+              bad.push(`${where} ends at ${Math.round(d.bottom)}, past the canvas bottom (${V.H})`);
+            if (d.top < -1) bad.push(`${where} starts at ${Math.round(d.top)}, above the canvas`);
+            if (d.x1 > V.W + 1)
+              bad.push(`${where} reaches ${Math.round(d.x1)}, past the canvas right edge (${V.W})`);
+            //  the HUD band is deliberately in the corner the pad sits in, and
+            //  is a developer aid rather than play surface; the battle screen
+            //  is not, and every word of it has to be readable with two thumbs
+            //  on the glass.
+            if (d.label === "battle") {
+              if (d.x0 < probeL - 1)
+                bad.push(`${where} starts at ${Math.round(d.x0)}, behind the left thumb (${probeL})`);
+              if (d.x1 > V.W - probeR + 1)
+                bad.push(`${where} reaches ${Math.round(d.x1)}, under the right thumb (${V.W - probeR})`);
+              if (d.bottom > V.H - probe + 1)
+                bad.push(`${where} ends at ${Math.round(d.bottom)}, under the controls (${V.H - probe})`);
+            }
+          }
+        }
+      } finally {
+        Object.defineProperty(AF.controls, "band",  dBand);
+        Object.defineProperty(AF.controls, "left",  dLeft);
+        Object.defineProperty(AF.controls, "right", dRight);
+        AF.const.VIEW.W = wasView.W; AF.const.VIEW.H = wasView.H;
+        if (AF.battle.isActive()) AF.battle.end("aborted");
+        AF.mode.set(wasMode);
+      }
+      return bad.length ? bad.slice(0, 5).join("; ") : true;
+    });
+
     t("the party screen stays inside its panel and above the thumbs", () => {
       /*  0.49.0, and the test this screen should have had since 0.7.5.
 
@@ -11881,7 +12030,13 @@ AF.selftest = (() => {
                 if (which === "board") {
                   const nodes = P.board().length;
                   const icons = marks.filter(m => m.what === "«icon»").length;
-                  if (icons < nodes)
+                  /*  0.49.2 — only once the atlas has decoded. `drawBoard`
+                      skips the blit when `AF.atlas.img` is not ready, which
+                      at BOOT it is not: the suite runs before the image
+                      finishes decoding, so this counted 0 of 11 and failed
+                      every device geometry while passing on re-run. The
+                      claim is about layout, not about asset loading. */
+                  if (AF.atlas.img && AF.atlas.img.width && icons < nodes)
                     bad.push(`${where}: ${icons} of ${nodes} nodes were drawn`);
                   if (!marks.some(m => /^costs |^held$/.test(m.what)))
                     bad.push(`${where}: no cost readout for the selected node`);
@@ -13118,10 +13273,13 @@ AF.selftest = (() => {
           return realNine.apply(this, arguments);
         };
         ctx.fillText = function (s, x, y) { texts.push({ s: String(s), x, y }); return realFill(s, x, y); };
-        /*  Long enough to wrap to three rows at the bubble's width, which is
-            the case that broke: one and two rows fit the old box by luck.  */
+        /*  Long enough to wrap at any bubble width. The original wrapped to
+            three rows in PORTRAIT and two in landscape, and the count was
+            asserted as three — one of the three tests that made the suite
+            green at 540x960 and red on every real device (0.49.2). */
         AF.speech.say("Wren", "Rowan's Hold has survived winters, raiders, and bad kings. " +
-                              "Whatever this is… it feels different.");
+                              "Whatever this is… it feels different, and it is not done with us yet, " +
+                              "whatever the Guildmaster would rather believe about the quiet.");
         if (AF.speech.finish) AF.speech.finish();
         sc.draw();
       } catch (e) { bad.push(`the scene draw threw: ${e.message}`); }
@@ -13137,14 +13295,26 @@ AF.selftest = (() => {
         //  The bubble is the LAST slate panel drawn — the prompt, if any, is first.
         const p = panels[panels.length - 1];
         const FRAME = 16 * AF.const.UI_SCALE;
-        const rows = texts.filter(t => t.s.length > 6 && t.y > p.y && t.y < p.y + p.h + 120);
-        if (rows.length < 3)
-          bad.push(`only ${rows.length} row(s) of a three-row line reached the canvas`);
+        /*  0.49.2 — rows are identified by their CONTENT, not by a window of
+            y values around the panel. The old filter reached 120px past the
+            panel's bottom to catch rows drawn outside it, and in landscape
+            that window swallowed the diagnostic band — three lines of engine
+            text the bubble never drew — which the test then reported as
+            dialogue "past the panel's bottom". It failed on a bug that did
+            not exist while looking exactly like one that did. */
+        const spoken = new Set("Rowan's Hold has survived winters raiders and bad kings Whatever this is it feels different Guildmaster quiet"
+                               .split(" ").filter(w => w.length > 3));
+        const rows = texts.filter(t => t.s.split(/\s+/).some(w => spoken.has(w.replace(/[.,…]/g, ""))));
+        if (rows.length < 2)
+          bad.push(`only ${rows.length} row(s) of a wrapped line reached the canvas`);
         for (const r of rows) {
           if (r.y < p.y + FRAME)
             bad.push(`a row is drawn at ${Math.round(r.y)}, inside the panel's top frame (${Math.round(p.y + FRAME)})`);
+          //  the bound and the number reported are the same one — the old
+          //  message compared against p.h - FRAME/2 and printed p.h, so it
+          //  read "a row at 516, past the panel's bottom (522)"
           if (r.y > p.y + p.h - FRAME / 2)
-            bad.push(`a row is drawn at ${Math.round(r.y)}, past the panel's bottom (${Math.round(p.y + p.h)})`);
+            bad.push(`a row is drawn at ${Math.round(r.y)}, past the panel's usable bottom (${Math.round(p.y + p.h - FRAME / 2)})`);
         }
         if (p.h < 108) bad.push(`the bubble is ${Math.round(p.h)}px — under the 108 its frame needs`);
       }
@@ -13365,6 +13535,9 @@ AF.selftest = (() => {
       const code = AF.selftest.codeOf(AF.battle.command);
       if (/hp\s*\+\s*ab\.power/.test(code))
         bad.push("a heal path still adds ability power to hp without scaling it");
+      //  and put the registry back — the comment above says "never a party
+      //  member", and outliving the suite is the other half of that
+      AF.actors.forget("heal_probe_a"); AF.actors.forget("heal_probe_b");
       return bad.length === 0 || bad.join("; ");
     });
 
@@ -13408,7 +13581,8 @@ AF.selftest = (() => {
         const size = AF.view.sizeOf(orient);
         AF.const.VIEW.W = size.W; AF.const.VIEW.H = size.H;
         const V = AF.const.VIEW;
-        const bands = orient === "portrait" ? [19, 96, 138, 229, 250, B.BAND_CEILING] : [0, 10, 24];
+        //  294 is an iPhone SE measured, and is why the ceiling moved (0.49.2)
+          const bands = orient === "portrait" ? [19, 96, 138, 229, 250, 294, B.BAND_CEILING] : [0, 10, 24];
         for (const band of bands) {
           probe = band;
           probeL = orient === "landscape" ? 200 : 0;
@@ -14570,20 +14744,46 @@ AF.selftest = (() => {
     });
 
     t("the speech bubble draws, and wraps instead of running off", () => {
-      const r = recorder();
-      const long = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr";
+      /*  0.49.2 — the fixture line is DERIVED from the viewport, and the test
+          runs in both orientations.
+
+          Before, it was a fixed 71-character string. The recorder's fake
+          `measureText` is 9px a character, so that line is 639px "wide" —
+          wider than a portrait bubble (about 480px of text room) and NARROWER
+          than a landscape one (about 790px). So in landscape it legitimately
+          fitted on one line and the test called that a wrapping failure.
+          The suite was red on every device that is not 540x960 and green on
+          the one geometry the harness happened to use.
+
+          A test that only holds at one screen size is worse than none: it
+          reports on the harness rather than on the game.                   */
+      const bad = [];
+      const wasView = { W: AF.const.VIEW.W, H: AF.const.VIEW.H };
       try {
-        AF.speech.say("Tester", long, 4000);
-        AF.speech.finish();
-        AF.speech.draw(r.ctx);
-      } catch (e) { AF.speech.clear(); return `AF.speech.draw threw: ${e.message}`; }
-      const body = r.calls.filter(c => c.t.includes("aaa") || c.t.includes("rrr") || /\b[a-z]{3}\b/.test(c.t));
-      AF.speech.clear();
-      if (!body.length) return "the bubble drew no dialogue at all";
-      if (body.length < 2) return "a line far wider than the bubble was drawn on one line — it is not wrapping";
-      const ys = body.map(c => c.y);
-      if (new Set(ys).size !== ys.length) return "wrapped lines share a y — they would overprint";
-      return true;
+        for (const orient of ["portrait", "landscape"]) {
+          const size = AF.view.sizeOf(orient);
+          AF.const.VIEW.W = size.W; AF.const.VIEW.H = size.H;
+          //  Guaranteed wider than any bubble: the bubble can never exceed the
+          //  viewport, and the recorder measures 9px a character.
+          const words = Math.ceil((AF.const.VIEW.W * 2) / (4 * 9));
+          const long = Array.from({ length: words }, (_, i) =>
+            String.fromCharCode(97 + (i % 26)).repeat(3)).join(" ");
+          const r = recorder();
+          try {
+            AF.speech.say("Tester", long, 4000);
+            AF.speech.finish();
+            AF.speech.draw(r.ctx);
+          } catch (e) { AF.speech.clear(); bad.push(`${orient}: AF.speech.draw threw: ${e.message}`); continue; }
+          const body = r.calls.filter(c => /\b[a-z]{3}\b/.test(c.t) && c.t !== "Tester");
+          AF.speech.clear();
+          if (!body.length) { bad.push(`${orient}: the bubble drew no dialogue at all`); continue; }
+          if (body.length < 2)
+            bad.push(`${orient}: a line ${long.length * 9}px wide was drawn on one line in a ${AF.const.VIEW.W}px view — it is not wrapping`);
+          const ys = body.map(c => c.y);
+          if (new Set(ys).size !== ys.length) bad.push(`${orient}: wrapped lines share a y — they would overprint`);
+        }
+      } finally { AF.const.VIEW.W = wasView.W; AF.const.VIEW.H = wasView.H; }
+      return bad.length === 0 || bad.join("; ");
     });
 
     t("the vendor list always draws the row the cursor is on", () => {
@@ -16269,6 +16469,35 @@ AF.selftest = (() => {
         ...[...AF.actors.byId.keys()].filter(k => k.startsWith("t_"))
       ];
       return strays.length === 0 || `left behind: ${strays.join(", ")}`;
+    });
+
+    /*  0.49.2 — THE ACTOR REGISTRY, watched by name rather than by naming
+        convention. `snapshotSession` records the party, the bag, money and
+        the flags; it has never recorded `AF.actors.byId`, and the only guard
+        on it was a stray check keyed on a `t_` PREFIX. So a fixture named
+        anything else survived the suite and lived in the player's registry
+        for the rest of the session — `heal_probe_a` and `heal_probe_b` did,
+        from 0.45.0 to here, and nothing could see them because they were
+        politely named.
+
+        A registry the suite adds to is not the bug the session net exists to
+        catch; it is the shape of it, one layer along.
+
+        Asked ABSOLUTELY — "is every actor one the game declares?" — and not
+        as a diff against a snapshot taken at the start of run(). The diff
+        was the first version and it was worthless: the harness runs the
+        suite twice, and on the second run the actors leaked by the first are
+        already in the baseline, so the check passed on exactly the build it
+        was written to fail. Reverting the fix still passed. A rule with no
+        memory cannot be fooled by its own history.                       */
+    const strayActors = [...AF.actors.byId.keys()].filter(k =>
+      !AF.content.roster(k) && !AF.state.party.some(u => u.id === k));
+    results.push({
+      name: "no actor outlives the suite that the game did not declare",
+      pass: strayActors.length === 0,
+      detail: strayActors.length === 0 ? ""
+            : `left in AF.actors: ${strayActors.join(", ")} ` +
+              `(new this run: ${strayActors.filter(k => !actorsBefore.has(k)).join(", ") || "none"})`
     });
 
     watching = false;
@@ -18553,11 +18782,16 @@ AF.demo = (() => {
       ctx.restore();
     }
 
+    /*  0.49.2 — the band's last line was CLIPPED. Drawn with a top baseline
+        at `V.H - 6`, a 10px face puts its glyph box at V.H+3 — three pixels
+        past the bottom edge, in both orientations, which is exactly how it
+        looked in the device screenshots. The three lines step up from
+        `V.H - 12` now, so the lowest one ends inside the canvas.          */
     const unver = AF.assets.todo().length;
     ctx.fillStyle = "#5f6a80";
     ctx.font = "10px ui-monospace, monospace";
-    ctx.fillText(AF.build.id(), pad, V.H - 18);
-    ctx.fillText(`${unver} asset${unver === 1 ? "" : "s"} still unverified`, pad, V.H - 6);
+    ctx.fillText(AF.build.id(), pad, V.H - 24);
+    ctx.fillText(`${unver} asset${unver === 1 ? "" : "s"} still unverified`, pad, V.H - 12);
     ctx.restore();
     drawFaultBand(ctx, V, pad);
   }
@@ -18596,6 +18830,13 @@ AF.demo = (() => {
                   sampleMotion,
                   isRoad, roadTile, scatterAt, roadTiles: () => new Set(ROAD), SPAWN,
                   drawsOwnSpeech: true,
+                  /*  0.49.2 — the HUD alone, so a test can measure what it
+                      draws without the world layer underneath it. The world
+                      is camera-anchored and is SUPPOSED to run off the edges;
+                      the HUD is not, and its lowest line was drawn three
+                      pixels past the bottom of the canvas in both
+                      orientations until this version. */
+                  drawHud,
                   // 0.6.17 — the Integrity slice, exposed so self-tests can
                   // cross the boundary rather than re-implement it.
                   RESONANCE, resonanceEntry,
@@ -22075,7 +22316,21 @@ AF.title = (() => {
         the left, the buttons take the right, and each is centred in its own
         half. Nothing about the portrait column changes.                    */
     const wideView = V.W > V.H;
-    const mid = wideView ? V.W * 0.30 : V.W / 2;
+    /*  0.49.2 — the left column is centred on 30% of the width, and in
+        landscape the wordmark is wide enough that its first letter reached
+        x=111 with the d-pad occupying the first 114. Nudged right by however
+        much the thumb actually takes, measured rather than padded: the
+        wordmark is the widest thing in this column, so clearing it clears
+        the column. Portrait is untouched — there is no side band there. */
+    let mid = wideView ? V.W * 0.30 : V.W / 2;
+    if (wideView) {
+      ctx.save();
+      ctx.font = `${17 * S}px Georgia, "Times New Roman", serif`;
+      if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${S}px`;
+      const half = ctx.measureText("AETHERFALL").width / 2 + S;
+      ctx.restore();
+      mid = Math.max(mid, (AF.controls.left || 0) + half + 4 * S);
+    }
     let y = wideView ? V.H * 0.30 : 72 * S;
 
     y = wordmark(ctx, mid, y) + 3 * S;
