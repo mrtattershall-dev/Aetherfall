@@ -331,7 +331,7 @@ const AF = {};
 AF.build = Object.freeze({
   name:      "Aetherfall",
   branch:    "rowans-hold",
-  version:   "0.48.0",
+  version:   "0.49.0",
   builtOn:   "2026-09-08",
   saveSchema: 5,
   id() { return `${this.name} ${this.version} · ${this.branch} · save v${this.saveSchema}`; }
@@ -5982,7 +5982,7 @@ AF.battle = (() => {
     return [
       "AF-R-711: no verified battle animation frames exist; every ability's animation id resolves to nothing",
       "AF-R-708 combat readability was unverifiable until 0.43.0; the device then reported that with a full party the command panel covered the enemies entirely and the d-pad was hidden, so the fight could neither be seen nor navigated. Both fixed at 0.44.0 and both now asserted by a budget test rather than by a screenshot",
-      "0.48.0 supports BOTH orientations. Landscape is unfinished in two places: the ascension board's node tree is a vertical column and overflows a 540px screen, and the vendor screen is unverified. Portrait is unaffected by either",
+      "0.48.0 supports BOTH orientations and 0.49.0 finished the screens landscape had broken: the board turns its tree on its side, the party sheet lays its sections into columns, and the vendor and the HUD clear the side thumbs. What remains is a JUDGEMENT, not a defect — forest_route (2560 tall) and barrow_downs (2176) are north-south corridors, so landscape shows 540px of what is ahead instead of 960, 44% less on the axis you travel. Deferred until the prototype has been played (AF-R-1007)",
       "the title's key art is a PORTRAIT illustration, so landscape centres it with dark margins either side. That is an asset question — a wide crop or a wide painting — not a layout one",
       "deep_barrow and ashen_reach are declared regions with encounter tables and no maps",
       "barrow_downs has art as of 0.9.2 — but no NPCs, and its ground tileset is shared with forest_route by decision (AF-R-303), not by measurement of its own",
@@ -11727,6 +11727,151 @@ AF.selftest = (() => {
       return closed === "overworld" || `a second cancel left the mode at "${closed}"`;
     });
 
+    t("the party screen stays inside its panel and above the thumbs", () => {
+      /*  0.49.0, and the test this screen should have had since 0.7.5.
+
+          The sheet is a HEAD of fixed size and a run of SECTIONS whose length
+          grows with the character, drawn into a panel of fixed size. Nothing
+          held the two together, and by 0.48.0 both orientations were wrong at
+          once: portrait drew STATUS through the footer and onto the panel's
+          bottom frame once a board was bought out, and landscape put
+          EQUIPMENT 15px BELOW THE CANVAS and lost it and STATUS entirely —
+          228px of the screen drawn where no one could see it. Neither cost a
+          test: 402 passed on that build.
+
+          Asserted from what REACHES THE CANVAS rather than from the layout
+          helpers, because the helpers were not the thing that was wrong — the
+          drawing was. Driven across both orientations, both views, every
+          party member, a range of control bands, and a character who has
+          bought their whole board, which is the case that overflows.      */
+      const bad = [];
+      const S = AF.const.UI_SCALE, P = AF.partyScreen;
+      const dBand  = Object.getOwnPropertyDescriptor(AF.controls, "band");
+      const dLeft  = Object.getOwnPropertyDescriptor(AF.controls, "left");
+      const dRight = Object.getOwnPropertyDescriptor(AF.controls, "right");
+      const wasView = { W: AF.const.VIEW.W, H: AF.const.VIEW.H };
+      const wasMode = AF.state.mode;
+      const u = AF.state.party[0];
+      const keep = u ? { nodes: (u.nodes || []).slice(), sp: u.sp || 0,
+                         abilities: (u.abilities || []).slice() } : null;
+      let probe = 0, probeL = 0, probeR = 0;
+      const cv = document.createElement("canvas");
+      cv.width = 8; cv.height = 8;
+      const spy = cv.getContext("2d");
+      const oNine = AF.render.nineSlice, oBlit = AF.render.blit;
+      try {
+        Object.defineProperty(AF.controls, "band",  { get: () => probe,  configurable: true });
+        Object.defineProperty(AF.controls, "left",  { get: () => probeL, configurable: true });
+        Object.defineProperty(AF.controls, "right", { get: () => probeR, configurable: true });
+        AF.mode.set("overworld");
+        P.open("overworld");
+
+        for (const grown of [false, true]) {
+          if (grown && u) { u.sp = 99;
+            for (let pass = 0; pass < 12; pass++)
+              for (const n of AF.ascension.boardOf(u)) AF.ascension.unlock(u, n.id); }
+          for (const orient of ["portrait", "landscape"]) {
+            const size = AF.view.sizeOf(orient);
+            AF.const.VIEW.W = size.W; AF.const.VIEW.H = size.H;
+            const V = AF.const.VIEW;
+            const bands = orient === "portrait" ? [0, 96, 229, 250] : [0, 10, 24];
+            for (const band of bands) {
+              probe  = band;
+              probeL = orient === "landscape" ? 114 : 0;
+              probeR = orient === "landscape" ? 86  : 0;
+              const Z = P.headZone(V, S), border = 16 * S;
+              const in_ = { x: Z.box.x + border, y: Z.box.y + border,
+                            r: Z.box.x + Z.box.w - border, b: Z.box.y + Z.box.h - border };
+
+              for (const which of ["sheet", "board"]) {
+                //  drive the real path: A on the sheet is what opens the board
+                while (P.view() !== "sheet") AF.events.emit("input:cancel");
+                if (which === "board") AF.events.emit("input:confirm");
+                if (P.view() !== which) continue;   // no board for this role
+
+                const marks = [];
+                const ft = spy.fillText.bind(spy);
+                spy.fillText = (txt, x, y) => {
+                  marks.push({ what: String(txt), x, y,
+                               w: spy.measureText(String(txt)).width, h: 8 * S });
+                  return ft(txt, x, y);
+                };
+                AF.render.blit = (img, r, x, y, w, h) => { marks.push({ what: "«icon»", x, y, w, h }); };
+                AF.render.nineSlice = () => {};
+                try { P.draw(spy); } finally {
+                  spy.fillText = ft; AF.render.blit = oBlit; AF.render.nineSlice = oNine;
+                }
+
+                const where = `${orient}, band ${band}, ${which}` + (grown ? ", bought out" : "");
+                if (!marks.length) { bad.push(`${where}: nothing reached the canvas`); continue; }
+                for (const m of marks) {
+                  const tag = m.what.slice(0, 18);
+                  //  1. inside the panel's INTERIOR, past the frame's corners
+                  if (m.y < in_.y - 1 || m.y + m.h > in_.b + 1)
+                    bad.push(`${where}: "${tag}" at y ${Math.round(m.y)}..${Math.round(m.y + m.h)} is outside the panel interior (${Math.round(in_.y)}..${Math.round(in_.b)})`);
+                  if (m.x < in_.x - 1 || m.x + m.w > in_.r + 1)
+                    bad.push(`${where}: "${tag}" at x ${Math.round(m.x)}..${Math.round(m.x + m.w)} is outside the panel interior (${Math.round(in_.x)}..${Math.round(in_.r)})`);
+                  //  2. and clear of the thumbs, which is the other half:
+                  //     a panel that fits the canvas can still be under a hand
+                  if (m.y + m.h > V.H - band + 1)
+                    bad.push(`${where}: "${tag}" ends at ${Math.round(m.y + m.h)}, under the controls at ${V.H - band}`);
+                  if (m.x < probeL - 1)
+                    bad.push(`${where}: "${tag}" starts at ${Math.round(m.x)}, behind the left thumb (${probeL})`);
+                  if (m.x + m.w > V.W - probeR + 1)
+                    bad.push(`${where}: "${tag}" reaches ${Math.round(m.x + m.w)}, under the right thumb (${V.W - probeR})`);
+                }
+                /*  3. Nothing may go missing in silence. Every section the
+                       sheet has is either drawn or NAMED in the footer, which
+                       is the difference between a screen that is short of room
+                       and a screen that is lying about the character.       */
+                if (which === "sheet") {
+                  /*  Exact matches, not substrings: the footer's "+STATUS"
+                      note CONTAINS "STATUS", so a substring test called a
+                      hidden section drawn and the check below passed a
+                      layout that had dropped one. */
+                  const drew  = (s) => marks.some(m => m.what === s);
+                  const named = (s) => marks.some(m => m.what.split(" ").includes(`+${s}`));
+                  for (const title of ["ABILITIES", "EQUIPMENT", "STATUS"]) {
+                    if (!drew(title) && !named(title))
+                      bad.push(`${where}: the ${title} section is neither drawn nor named as hidden`);
+                    /*  And at the size the demo actually ships at — a
+                        starting character on a real phone — "named as
+                        hidden" is not good enough. The whole sheet has to
+                        be on the screen. */
+                    if (!grown && !drew(title))
+                      bad.push(`${where}: a starting character's ${title} section does not fit`);
+                  }
+                }
+                /*  4. The board is a choice, and a choice you cannot price is
+                       not one: every node must be visible AND the readout for
+                       the selected node must reach the canvas.             */
+                if (which === "board") {
+                  const nodes = P.board().length;
+                  const icons = marks.filter(m => m.what === "«icon»").length;
+                  if (icons < nodes)
+                    bad.push(`${where}: ${icons} of ${nodes} nodes were drawn`);
+                  if (!marks.some(m => /^costs |^held$/.test(m.what)))
+                    bad.push(`${where}: no cost readout for the selected node`);
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        AF.render.nineSlice = oNine; AF.render.blit = oBlit;
+        Object.defineProperty(AF.controls, "band",  dBand);
+        Object.defineProperty(AF.controls, "left",  dLeft);
+        Object.defineProperty(AF.controls, "right", dRight);
+        AF.const.VIEW.W = wasView.W; AF.const.VIEW.H = wasView.H;
+        while (P.isOpen() && P.view() !== "sheet") AF.events.emit("input:cancel");
+        if (P.isOpen()) P.close();
+        if (u && keep) { u.nodes = keep.nodes.slice(); u.sp = keep.sp;
+                         u.abilities = keep.abilities.slice(); u.clampVitals(); }
+        AF.mode.set(wasMode);
+      }
+      return bad.length ? bad.slice(0, 5).join("; ") : true;
+    });
+
     t("walking up to the merchant, talking, and reaching his shop", () => {
       /*  The guard that matters. AF.authoring.validateInteractables approved
           this very zone at 0.7.0 while pressing A at it did nothing, so a
@@ -16631,8 +16776,16 @@ AF.vendor = (() => {
         the on-screen pad and the A/B buttons. It stops above them now, and
         `rows` below is derived from the panel's own height, so shortening it
         drops list rows rather than hiding them under a button.            */
-    const PX = 8 * S, PY = 12 * S;                    // panel origin
-    const PW = V.W - 16 * S, PH = AF.controls.top - PY - 4 * S;
+    /*  0.49.0 — the panel clears the thumbs on THREE sides, not one. 0.31.0
+        stopped it running behind the pad at the bottom, which was the whole
+        question in portrait; in landscape the pad and the buttons move to the
+        left and right edges and `PX = 8 * S` put the shop's cursor, its icons
+        and every row's first character under the d-pad. Same rule as 0.31.0,
+        applied to the axis that orientation actually spends. */
+    const PY = 12 * S;
+    const PX = Math.max(8 * S, AF.controls.left);
+    const PW = Math.min(V.W - 8 * S, V.W - AF.controls.right) - PX;
+    const PH = AF.controls.top - PY - 4 * S;
     const B  = 16 * S;                                // frame border thickness
     const L  = PX + B + 3 * S, R = PX + PW - B - 3 * S;   // usable text span
     let ty   = PY + B + 2 * S;
@@ -18224,7 +18377,11 @@ AF.demo = (() => {
     const LABEL_W = 44, VALUE_W = 66;
     const barW = Math.min(V.W - pad * 2 - LABEL_W - VALUE_W - 16, 232), barH = 11 * S2;
     const inset = 4 * S2;
-    const blockX = pad, blockY = pad + bh + 12;
+    /*  0.49.0 — past the left thumb. In portrait `AF.controls.left` is 0 and
+        this is the `pad` it has always been; in landscape the d-pad moves to
+        the left edge at mid-height and the bottom of the SEAL bar was drawn
+        under it — the three numbers a player checks mid-fight, behind a hand. */
+    const blockX = Math.max(pad, AF.controls.left), blockY = pad + bh + 12;
     const blockW = LABEL_W + barW + VALUE_W + 16, blockH = 3 * (barH + 6) + 12;
     ctx.fillStyle = "rgba(14,11,22,0.72)";
     ctx.fillRect(blockX, blockY, blockW, blockH);
@@ -22304,8 +22461,14 @@ AF.partyScreen = (() => {
   function lines(u) {
     if (!u) return [];
     const ab = (u.abilities || []).map(id => AF.battle.ABILITIES.get(id)?.name || id);
-    const eq = Object.entries(u.equipment || {})
-      .map(([slot, id]) => `${slot}: ${AF.data.item(id)?.name || id}`);
+    const worn = Object.entries(u.equipment || {})
+      .map(([slot, id]) => [slot, AF.data.item(id)?.name || id]);
+    const eq = worn.map(([slot, name]) => `${slot}: ${name}`);
+    /*  0.49.0 — the same rows without the slot prefix. A narrow column shows
+        these instead of ellipsising the ITEM, because the icon strip above
+        the list already names the four slots and the name is the half the
+        player does not already know. */
+    const eqShort = worn.map(([, name]) => name);
     const st = (u.statusEffects || [])
       .map(e => `${AF.content.status(e.id)?.name || e.id} (${e.turns})`);
     return {
@@ -22316,6 +22479,7 @@ AF.partyScreen = (() => {
       stats: AF.stats.ids().map(id => [id.toUpperCase(), u.stat(id)]),
       ab:    ab.length ? ab : ["(none)"],
       eq:    eq.length ? eq : ["(nothing equipped)"],
+      eqShort: eqShort.length ? eqShort : ["(nothing equipped)"],
       st:    st.length ? st : ["(none)"]
     };
   }
@@ -22330,6 +22494,94 @@ AF.partyScreen = (() => {
   const SLOT_ART = { weapon:"ui_slot_weapon", body:"ui_slot_armor",
                      head:"ui_slot_head",     focus:"ui_slot_focus" };
 
+  /*  0.49.0 — one home for "this string must fit that many pixels". The
+      board's title trimmed itself with a private loop and the sheet did not
+      trim at all, which is how a long item name ran past its column edge the
+      moment a column got narrower than the whole screen (AF-R-801).      */
+  function fit(ctx, s, w) {
+    s = String(s);
+    if (w <= 0 || ctx.measureText(s).width <= w) return s;
+    let t = s;
+    while (t.length > 1 && ctx.measureText(t + "…").width > w) t = t.slice(0, -1);
+    return t + "…";
+  }
+
+  const ROW = (S) => 9 * S;      // one line of a section list
+  const DIV = (S) => 12 * S;     // the advance a divider costs
+
+  /*  0.49.0 — WHERE THE SHEET PUTS THINGS.
+
+      The screen is a HEAD — name, vitals, stats, a fixed size — and a run of
+      SECTIONS whose length depends on how far the character has grown: a
+      level-1 Aren lists one ability, a bought-out one lists seven. Until now
+      it was a single stack with no floor, and both orientations ran off the
+      end of it in the same version, for opposite reasons.
+
+      Portrait ran out of height at LEVEL: with the board bought out, STATUS
+      was drawn through the footer line and its last row landed at y=930 —
+      on the panel's bottom frame, outside the interior the inset exists to
+      stay within. Landscape ran out immediately: EQUIPMENT began 15px below
+      the canvas and the whole of it and STATUS, 228px of the sheet, was
+      drawn where no one could see it.
+
+      Geometry lives out here rather than inside draw() so a test can ask
+      where the sheet intends to put things without rendering a frame.    */
+  /*  Where the thumbs are. This screen never asked, and so in portrait its
+      last 229 canvas pixels — the equipment list at a bought-out board, and
+      the footer hint ALWAYS — were drawn under the d-pad. Zeroes without a
+      DOM, so the headless suite lays the screen out at its full size. */
+  function bands() {
+    const c = AF.controls;
+    const n = (v) => (typeof v === "number" && v >= 0 && isFinite(v)) ? v : 0;
+    return c ? { band: n(c.band), left: n(c.left), right: n(c.right) }
+             : { band: 0, left: 0, right: 0 };
+  }
+
+  function headZone(V, S) {
+    const pad = 6 * S, border = 16 * S;
+    const wide = V.W > V.H, c = bands();
+    /*  The panel stops where the controls start rather than running behind
+        them: an empty lower third with the pad on the background reads as a
+        screen that ends there, and a full one with the pad over its text
+        reads as a bug. */
+    const box = { x: Math.max(pad, c.left), y: 4 * S,
+                  w: Math.max(120 * S, Math.min(V.W - pad, V.W - c.right) - Math.max(pad, c.left)),
+                  h: Math.max(80 * S, V.H - 10 * S - c.band) };
+    const ix = box.x + border + 3 * S, iw = box.w - (border + 3 * S) * 2;
+    //  one text row clear of the frame's inner edge, as it always was
+    const foot = box.y + box.h - border - 8 * S;
+    return { box, ix, iw, wide, foot,
+             top:    box.y + border + 2 * S,   // the banner's own line
+             bottom: foot - 4 * S,
+             /*  Landscape sets the head in a column of its own, because the
+                 bars are the one part of this screen that wants WIDTH.
+                 Portrait keeps the full width it always had, so its head is
+                 laid out to the pixel as it was before. */
+             x: ix, w: wide ? Math.floor(iw * 0.40) : iw };
+  }
+
+  /*  The columns the sections flow through, chosen from their MEASURED total
+      rather than from the orientation alone. Landscape: the two beside the
+      head. Portrait: the full width while that is enough — so a level-1
+      sheet is laid out exactly as it always was — and two half-width columns
+      only once it is not. */
+  function sectionCols(V, S, top, total) {
+    const z = headZone(V, S), gap = 6 * S;
+    if (z.wide) {
+      /*  Unequal on purpose. The sections flow in order, so the first column
+          takes the long lists and the second takes the tail — splitting the
+          area evenly narrowed the column doing the work and ellipsised item
+          names that a 60/40 split shows whole. */
+      const area = z.iw - z.w - gap * 2, cy = z.top + 17 * S;
+      const c0 = Math.floor(area * 0.60), c1 = area - c0;
+      return [{ x: z.ix + z.w + gap,          w: c0, y: cy },
+              { x: z.ix + z.w + gap * 2 + c0, w: c1, y: cy }];
+    }
+    if (total <= z.bottom - top) return [{ x: z.ix, w: z.iw, y: top }];
+    const cw = Math.floor((z.iw - gap) / 2);
+    return [{ x: z.ix, w: cw, y: top }, { x: z.ix + cw + gap, w: cw, y: top }];
+  }
+
 
   /*  The board. Nodes sit on their own x/y grid at a fixed pitch, with
       prerequisite lines drawn first so icons land on top. Three states read
@@ -22339,11 +22591,11 @@ AF.partyScreen = (() => {
   function drawBoard(ctx, u) {
     const V = AF.const.VIEW, S = AF.const.UI_SCALE;
     const nodes = board();
-    const border = 16 * S, pad = 6 * S;
-    const ix = pad + border + 3 * S, iw = V.W - (pad + border + 3 * S) * 2;
-    AF.render.nineSlice("ui_panel_slate", pad, 4 * S, V.W - pad * 2, V.H - 10 * S);
+    //  the same box the sheet uses — one panel, one set of thumbs to clear
+    const Z = headZone(V, S), B = Z.box, ix = Z.ix, iw = Z.iw;
+    AF.render.nineSlice("ui_panel_slate", B.x, B.y, B.w, B.h);
 
-    let y = 4 * S + border + 2 * S;
+    let y = Z.top;
     AF.render.nineSlice("ui_banner", ix, y, iw, 13 * S);
     /*  The title and the SP readout share one banner, and every party name
         currently carries a "[placeholder] " prefix — so the title is measured
@@ -22355,19 +22607,42 @@ AF.partyScreen = (() => {
     ctx.fillStyle = "#ffe6bd";
     ctx.fillText(sp, ix + iw - 9 * S - spW, y + 3 * S);
     const room = iw - 18 * S - spW - 4 * S;
-    let title = u.name;
-    while (title.length > 4 && ctx.measureText(title).width > room)
-      title = title.slice(0, -1);
-    ctx.fillText(title === u.name ? title : title + "…", ix + 9 * S, y + 3 * S);
+    ctx.fillText(fit(ctx, u.name, room), ix + 9 * S, y + 3 * S);
     y += 18 * S;
 
     /*  Centred on the widest column rather than pinned left: the boards are
         three columns wide and the panel is not, so pinning left left half the
         screen empty beside the tree. */
-    const cell = 22 * S;
-    const cols = Math.max(...nodes.map(m => m.x)) + 1;
+    /*  0.49.0 — landscape TURNS the tree on its side rather than shrinking
+        it. Every board is three columns by seven rows: 462px tall, and a
+        540px screen cannot hold that once the banner and the node readout
+        are paid for — the bottom node was drawn half off the canvas and the
+        "+2 ATK / costs 0" readout was 54px past the edge, so the one thing
+        the board is for (what does this node do, what does it cost) could
+        not be read at all. Transposed it is 462 WIDE, which is the axis
+        landscape has to spare.
+
+        The GRAPH is untouched. Every edge is drawn from the node positions,
+        so rotating the placement rotates the whole picture, prerequisite
+        lines and all — there is no second board layout to keep in step. */
+    const turn = V.W > V.H;
+    const gx = (n) => turn ? n.y : n.x, gy = (n) => turn ? n.x : n.y;
+    const cols = Math.max(...nodes.map(gx)) + 1;
+    const rows = Math.max(...nodes.map(gy)) + 1;
+    /*  The PITCH comes from the room left, not from a constant. 22 * S was
+        the number a 960-tall screen could afford; once the panel stopped
+        running behind the d-pad there were 575px of interior, and a
+        seven-row tree at that pitch pushed the "costs N" readout onto the
+        footer line. The floor is 18 * S — a node's own box — so icons never
+        touch, and the icons themselves stay 16 * S whatever happens to the
+        spacing, which is what AF-R-405 is about. */
+    const READOUT = 30 * S;                       // the three lines under it
+    const cell = Math.max(18 * S,
+                   Math.min(22 * S,
+                     Math.floor((Z.bottom - READOUT - y) / rows),
+                     Math.floor(iw / cols)));
     const ox = ix + Math.max(0, (iw - cols * cell) / 2), oy = y;
-    const at = (n) => ({ x: ox + n.x * cell, y: oy + n.y * cell });
+    const at = (n) => ({ x: ox + gx(n) * cell, y: oy + gy(n) * cell });
 
     ctx.strokeStyle = "#6f6a8a"; ctx.lineWidth = 2;
     for (const n of nodes)
@@ -22400,7 +22675,7 @@ AF.partyScreen = (() => {
     });
 
     const n = nodeAt();
-    let by = oy + (Math.max(...nodes.map(m => m.y)) + 1) * cell + 4 * S;
+    let by = oy + rows * cell + 4 * S;
     if (n) {
       const what = n.kind === "stat"
         ? `+${n.amount} ${n.stat.toUpperCase()}`
@@ -22414,7 +22689,7 @@ AF.partyScreen = (() => {
     }
     if (lastResult) { ctx.fillStyle = "#8c4a3a"; ctx.fillText(lastResult, ix, by); }
     ctx.fillStyle = "#5a5875";
-    ctx.fillText("up/down: node   A: spend   B: back", ix, V.H - 14 * S - border);
+    ctx.fillText("up/down: node   A: spend   B: back", ix, Z.foot);
   }
 
   function draw(ctx) {
@@ -22440,11 +22715,11 @@ AF.partyScreen = (() => {
         rectangles beside them, which is a placeholder standing next to the
         real thing. Frames go through AF.render.nineSlice — the one home for
         UI frame drawing — at UI_SCALE, so AF-R-405 holds here as elsewhere. */
-    const pad = 6 * S, w = V.W - pad * 2;
+    const headZ = headZone(V, S), B = headZ.box;
     /*  0.7.7 — BGbox_01B, muted slate. The demo's ui_panel is bright peach,
         which fought every muted brown and green in the world art and forced
         the whole screen onto a palette nothing else uses. */
-    AF.render.nineSlice("ui_panel_slate", pad, 4 * S, w, V.H - 10 * S);
+    AF.render.nineSlice("ui_panel_slate", B.x, B.y, B.w, B.h);
     /*  The inner inset must clear the FRAME, not just the panel edge.
         ui_panel_slate has 16 source-px corners, so its border is 16 * S = 48
         screen px thick; an inset of 6 * S put every line of text under it and
@@ -22452,8 +22727,8 @@ AF.partyScreen = (() => {
         corners, which is why the smaller inset looked fine until the box
         changed. Inset is derived from the slice, not guessed. */
     const border = 16 * S;
-    const ix = pad + border + 3 * S, iw = w - (border + 3 * S) * 2;
-    let y = 4 * S + border + 2 * S;
+    const ix = headZ.ix, iw = headZ.iw;
+    let y = headZ.top;
 
     AF.render.nineSlice("ui_banner", ix, y, iw, 13 * S);
     /*  The banner is dark maroon and the panel is light peach — two
@@ -22466,92 +22741,170 @@ AF.partyScreen = (() => {
     const of = `${clamp() + 1}/${party().length}`;
     ctx.fillText(of, ix + iw - 9 * S - ctx.measureText(of).width, y + 3 * S);
     y += 17 * S;
-    ctx.fillStyle = "#4a4860"; ctx.fillText(L.sub, ix, y); y += 11 * S;
-
-    /*  Divider_01 is 48x16 with 3-tile ends; drawn as a three-slice so it
-        spans any width at integer scale. */
-    const divider = () => {
-      AF.render.nineSlice("ui_divider", ix, y, iw, 16 * S);
-      y += 12 * S;
-    };
-
-    const section = (title, rows) => {
-      ctx.fillStyle = "#2b2a3a"; ctx.fillText(title, ix, y); y += 9 * S;
-      ctx.fillStyle = "#3b3950";
-      for (const r of rows) { ctx.fillText(r, ix + 3 * S, y); y += 9 * S; }
-      y += 4 * S;
-    };
+    //  ── the head: the vitals and stats, in whichever column it was given ──
+    const hx = headZ.x, hw = headZ.w;
+    y = headZ.top + 17 * S;
+    ctx.fillStyle = "#4a4860"; ctx.fillText(fit(ctx, L.sub, hw), hx, y); y += 11 * S;
 
     //  vitals as real bars rather than two lines of text
     /*  Reserve the readout's REAL width rather than a guessed constant. The
         pack font is proportional (W is 18px, i is 6px at this size), so a
         fixed inset collides the moment a number gets wider. Measured against
         the widest plausible value. */
-    const readoutW = ctx.measureText("8888/8888").width;
-    const barW = iw - 8 * S - readoutW - 6 * S;
+    /*  0.49.0 — measured against the readouts this character can actually
+        show, not against an invented "8888/8888". Four-digit HP does not
+        exist in this game, and reserving room for it cost 212px — most of a
+        landscape column — which is why the bars had nowhere left to be. Both
+        sides use `max`, so the reservation does not shift as HP falls. */
+    const readoutW = Math.max(ctx.measureText(`${u.hpMax()}/${u.hpMax()}`).width,
+                              ctx.measureText(`${u.mpMax()}/${u.mpMax()}`).width);
+    const labelW = Math.max(ctx.measureText("HP").width, ctx.measureText("MP").width);
+    const barW = hw - labelW - 3 * S - readoutW - 6 * S;
     for (const [label, cur, max, fill] of [
       ["HP", u.hp, u.hpMax(), "ui_bar_red"],
       ["MP", u.mp, u.mpMax(), "ui_bar_cyan"]
     ]) {
-      ctx.fillStyle = "#2b2a3a"; ctx.fillText(label, ix, y + 2 * S);
-      const bx = ix + 8 * S;
+      ctx.fillStyle = "#2b2a3a"; ctx.fillText(label, hx, y + 2 * S);
+      /*  0.49.0 — measured, like the readout below it. `8 * S` was narrower
+          than the two letters it was meant to clear, so "HP" and "MP" were
+          drawn on the bar frame's left cap in every orientation. */
+      const bx = hx + labelW + 3 * S;
       AF.render.nineSlice("ui_barframe_dark", bx, y, barW, 11 * S);
       AF.render.barFill(fill, bx + 4 * S, y + 4 * S, barW - 8 * S,
                         max ? cur / max : 0, S);
       const t = `${cur}/${max}`;
       ctx.fillStyle = "#2b2a3a";
-      ctx.fillText(t, ix + iw - ctx.measureText(t).width, y + 2 * S);
+      ctx.fillText(t, hx + hw - ctx.measureText(t).width, y + 2 * S);
       y += 13 * S;
     }
-    ctx.fillStyle = "#4a4860"; ctx.fillText(L.exp, ix, y); y += 13 * S;
+    ctx.fillStyle = "#4a4860"; ctx.fillText(fit(ctx, L.exp, hw), hx, y); y += 13 * S;
     // stats in two columns so eight rows fit a portrait screen
-    ctx.fillStyle = "#2b2a3a"; ctx.fillText("STATS", ix, y); y += 9 * S;
+    ctx.fillStyle = "#2b2a3a"; ctx.fillText("STATS", hx, y); y += 9 * S;
     ctx.fillStyle = "#3b3950";
     const half = Math.ceil(L.stats.length / 2);
     for (let i = 0; i < half; i++) {
       const a = L.stats[i], b = L.stats[i + half];
-      ctx.fillText(`${a[0].padEnd(4)} ${String(a[1]).padStart(4)}`, ix + 3 * S, y);
-      if (b) ctx.fillText(`${b[0].padEnd(4)} ${String(b[1]).padStart(4)}`, ix + 42 * S, y);
+      ctx.fillText(`${a[0].padEnd(4)} ${String(a[1]).padStart(4)}`, hx + 3 * S, y);
+      if (b) ctx.fillText(`${b[0].padEnd(4)} ${String(b[1]).padStart(4)}`, hx + 42 * S, y);
       y += 9 * S;
     }
     y += 5 * S;
 
-    divider();
-    section("ABILITIES", L.ab);
-    divider();
+    /*  ── the sections ──
 
-    /*  Equipment draws as the pack's own slot icons rather than a text list.
-        The slot art names a category, so the mapping is stated rather than
-        implied: focus takes the Necklace icon because the pack ships no
-        arcane-implement slot and a caster's focus is worn, not wielded.
-        An unfilled slot draws Slot_01_Empty — the screen shows what a
-        character COULD wear, which a text list cannot. */
-    ctx.fillStyle = "#2b2a3a"; ctx.fillText("EQUIPMENT", ix, y); y += 10 * S;
-    const img = AF.atlas.img;
-    let sx = ix + 2 * S;
-    for (const slot of Object.keys(SLOT_ART)) {
-      const id = (u.equipment || {})[slot];
-      const r = AF.atlas.rect(id ? SLOT_ART[slot] : "ui_slot_empty");
-      if (img && r) AF.render.blit(img, r, sx, y, 16 * S, 16 * S);
-      sx += 18 * S;
+        Measured and PLACED before anything is drawn, because the layout is
+        chosen from the answer. Discovering halfway down the screen that
+        there is no room left is exactly how the old single stack ran off the
+        bottom of both orientations.                                       */
+    const SECTIONS = [
+      { title: "ABILITIES", rows: L.ab },
+      { title: "EQUIPMENT", rows: L.eq, short: L.eqShort, icons: true },
+      { title: "STATUS",    rows: L.st }
+    ];
+    /*  The slot strip WRAPS. Four icons at an 18 * S pitch are 216px wide and
+        a portrait column, once the screen went two-up, is 186 — the fourth
+        slot was drawn through the panel's right frame. How many fit is a
+        question about the column, so the header's height is asked per column
+        rather than fixed. */
+    const perRow  = (w) => Math.max(1, Math.floor((w - 2 * S) / (18 * S)));
+    const iconRows = (s, w) => s.icons ? Math.ceil(Object.keys(SLOT_ART).length / perRow(w)) : 0;
+    const headOf   = (s, w) => s.icons ? 10 * S + iconRows(s, w) * 18 * S : 9 * S;
+    const heightOf = (s, w) => headOf(s, w) + s.rows.length * ROW(S) + 4 * S;
+    //  dividers separate, so there are one fewer of them than sections
+    const total = SECTIONS.reduce((a, s) => a + heightOf(s, headZ.iw), 0)
+                + DIV(S) * (SECTIONS.length - 1);
+    const cols = sectionCols(V, S, y, total);
+    const bottom = headZ.bottom;
+
+    /*  Each section goes in the FIRST column that can hold it, which is not
+        the same as a single cursor that only ever moves forward: with one
+        cursor, a long ABILITIES list pushed EQUIPMENT into the second column
+        and STATUS off the screen while the first column still had 92px
+        free. Sections keep their order; only the column they land in is
+        chosen for them.
+
+        A section that fits nowhere is NAMED below rather than dropped in
+        silence, and a list too long for its column trims with a "+N more".
+        Both are AF-R-1006's shape: a labelled shortfall the player can act
+        on, never a quiet absence.                                         */
+    const ys = cols.map(c => c.y), placed = [], missed = [];
+    for (const s of SECTIONS) {
+      let at = -1;
+      for (let c = 0; c < cols.length; c++) {
+        const div = ys[c] > cols[c].y ? DIV(S) : 0;
+        //  header, whatever art it carries, and one row
+        const need = headOf(s, cols[c].w) + ROW(S) + 4 * S;
+        if (ys[c] + div + need <= bottom) { at = c; break; }
+      }
+      if (at < 0) { missed.push(s.title); continue; }
+      const div = ys[at] > cols[at].y ? DIV(S) : 0;
+      placed.push({ s, col: at, y: ys[at] + div, div: div > 0 });
+      ys[at] += div + Math.min(heightOf(s, cols[at].w), bottom - ys[at] - div);
     }
-    y += 18 * S;
-    ctx.fillStyle = "#3b3950";
-    for (const line of L.eq) { ctx.fillText(line, ix + 2 * S, y); y += 9 * S; }
-    y += 4 * S;
 
-    divider();
-    section("STATUS", L.st);
+    const img = AF.atlas.img;
+    for (const p of placed) {
+      const s = p.s, c = cols[p.col];
+      let cx = c.x, cw = c.w;
+      y = p.y;
+      /*  Divider_01 is 48x16 with 3-tile ends; drawn as a three-slice so it
+          spans any width at integer scale. It SEPARATES, so it is drawn
+          between things and never at the top of a column. */
+      if (p.div) { AF.render.nineSlice("ui_divider", cx, y - DIV(S), cw, 16 * S); }
+      ctx.fillStyle = "#2b2a3a"; ctx.fillText(s.title, cx, y);
+      y += s.icons ? 10 * S : 9 * S;
+      /*  Equipment draws as the pack's own slot icons rather than a text list.
+          The slot art names a category, so the mapping is stated rather than
+          implied: focus takes the Necklace icon because the pack ships no
+          arcane-implement slot and a caster's focus is worn, not wielded.
+          An unfilled slot draws Slot_01_Empty — the screen shows what a
+          character COULD wear, which a text list cannot. */
+      if (s.icons) {
+        const per = perRow(cw);
+        Object.keys(SLOT_ART).forEach((slot, i) => {
+          const id = (u.equipment || {})[slot];
+          const r = AF.atlas.rect(id ? SLOT_ART[slot] : "ui_slot_empty");
+          if (img && r) AF.render.blit(img, r, cx + 2 * S + (i % per) * 18 * S,
+                                       y + Math.floor(i / per) * 18 * S, 16 * S, 16 * S);
+        });
+        y += iconRows(s, cw) * 18 * S;
+      }
+      ctx.fillStyle = "#3b3950";
+      const indent = s.icons ? 2 * S : 3 * S, room = cw - indent;
+      const roomFor = Math.max(0, Math.floor((bottom - y) / ROW(S)));
+      const n = s.rows.length <= roomFor ? s.rows.length : Math.max(0, roomFor - 1);
+      /*  The choice of form belongs to the LIST, not the row: picking per
+          row put "Chipped Knife" directly above "body: Rag Wrap", which
+          reads as a mistake rather than as a column doing its best. If any
+          row needs the shorter form, every row takes it. */
+      const use = (s.short && s.short.length === s.rows.length
+                   && s.rows.some(r => ctx.measureText(r).width > room)) ? s.short : s.rows;
+      for (let i = 0; i < n; i++) { ctx.fillText(fit(ctx, use[i], room), cx + indent, y); y += ROW(S); }
+      if (n < s.rows.length) { ctx.fillText(`+${s.rows.length - n} more`, cx + indent, y); }
+    }
 
-    //  inside the panel, not on its bottom edge
+    //  inside the panel, not on its bottom edge — and above the thumbs
     ctx.fillStyle = "#5a5875";
-    ctx.fillText("up/down: party    B: close", ix, V.H - 14 * S - border);
+    /*  What did not fit is named at the other end of the footer rather than
+        appended to the hint — appended, it was the NOTE that got ellipsised
+        ("…(STATU"), which is a shortfall report that cannot report. It uses
+        "+STATUS", the same vocabulary the trimmed lists already use.
+
+        And if it still does not fit beside the hint, the HINT gives way, not
+        the note: up and down are two arrows a player will find, and a
+        section they cannot see is not. */
+    const hint = "up/down: party  B: close";
+    const note = missed.length ? missed.map(t => `+${t}`).join(" ") : "";
+    const noteW = note ? ctx.measureText(note).width : 0;
+    if (!note || noteW + ctx.measureText(hint).width + 6 * S <= iw)
+      ctx.fillText(fit(ctx, hint, iw - (noteW ? noteW + 6 * S : 0)), ix, headZ.foot);
+    if (note) ctx.fillText(fit(ctx, note, iw), ix + iw - Math.min(noteW, iw), headZ.foot);
   }
 
   AF.mode.register("menu", { update, draw });
 
   return { open, close, isOpen, move, draw, update, problems, lines,
-           shown, cursor: () => clamp(), SLOT_ART,
+           shown, cursor: () => clamp(), SLOT_ART, headZone, sectionCols, fit,
            view: () => view, nodeCursor: () => nodeCursor, nodeAt, board,
            lastResult: () => lastResult };
 })();
